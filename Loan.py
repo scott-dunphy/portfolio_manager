@@ -194,8 +194,8 @@ class Loan:
                 self.schedule[key]['beginning_balance'] = 0
                 self.schedule[key]['ending_balance'] = self.loan_amount
             else:
-                if prepayment_done:
-                    # Zero out all cash flows after prepayment
+                if prepayment_done or self.schedule[prior_key]['ending_balance'] <= 0:
+                    # Zero out all cash flows after prepayment or full amortization
                     self.schedule[key].update({
                         'beginning_balance': 0,
                         'loan_draw': 0,
@@ -207,48 +207,54 @@ class Loan:
                     })
                     continue
 
-                # Normal Calculation Before Prepayment
-                self.schedule[key]['beginning_balance'] = self.schedule[prior_key]['ending_balance']
+                # Normal Loan Calculations Before Prepayment or Full Amortization
+                self.schedule[key]['beginning_balance'] = max(0, self.schedule[prior_key]['ending_balance'])
                 self.schedule[key]['loan_draw'] = self.get_loan_draw(key)
-                self.schedule[key]['loan_paydown'] = self.get_loan_paydown(key)
+                self.schedule[key]['loan_paydown'] = max(0, self.get_loan_paydown(key))
 
                 # Calculate interest
                 self.schedule[key]['interest_payment'] = self.calculate_interest(
                     self.schedule[key]['beginning_balance'], prior_key, key
                 )
 
-                # Scheduled principal payment
-                if i <= self.interest_only_periods or self.amortizing_periods == 0:
-                    self.schedule[key]['scheduled_principal_payment'] = 0
-                else:
-                    self.schedule[key]['scheduled_principal_payment'] = max(
+                # **Scheduled Principal Payment (Only if Amortizing)**
+                if self.amortizing_periods > 0 and i > self.interest_only_periods:
+                    scheduled_principal = max(
                         0, self.amortizing_payment - self.schedule[key]['interest_payment']
                     )
 
-                # **Prepayment Check**
+                    # Avoid overpaying past zero balance
+                    scheduled_principal = min(
+                        scheduled_principal, self.schedule[key]['beginning_balance']
+                    )
+                    self.schedule[key]['scheduled_principal_payment'] = scheduled_principal
+                else:
+                    self.schedule[key]['scheduled_principal_payment'] = 0
+
+                # **Prepayment Check Without Double-Counting Scheduled Principal**
                 if self.prepayment_date and key == self.prepayment_date and not prepayment_done:
-                    # Apply prepayment after the scheduled principal payment
-                    prepayment_amount = (
-                            self.schedule[key]['beginning_balance'] -
-                            self.schedule[key]['scheduled_principal_payment']
+                    # Calculate prepayment amount after applying scheduled principal payment
+                    prepayment_amount = max(
+                        0, self.schedule[key]['beginning_balance'] -
+                           self.schedule[key]['scheduled_principal_payment']
                     )
                     self.add_loan_paydown(prepayment_amount, key)
                     prepayment_done = True
 
                 # Apply maturity paydown if the loan matures
                 if key == self.maturity_date and not prepayment_done:
-                    maturity_paydown = (
-                            self.schedule[key]['beginning_balance'] -
-                            self.schedule[key]['scheduled_principal_payment']
+                    maturity_paydown = max(
+                        0, self.schedule[key]['beginning_balance'] -
+                           self.schedule[key]['scheduled_principal_payment']
                     )
                     self.add_loan_paydown(maturity_paydown, key)
 
                 # Update ending balance
-                self.schedule[key]['ending_balance'] = (
-                        self.schedule[key]['beginning_balance'] +
-                        self.schedule[key]['loan_draw'] -
-                        self.schedule[key]['loan_paydown'] -
-                        self.schedule[key]['scheduled_principal_payment']
+                self.schedule[key]['ending_balance'] = max(
+                    0, self.schedule[key]['beginning_balance'] +
+                       self.schedule[key]['loan_draw'] -
+                       self.schedule[key]['loan_paydown'] -
+                       self.schedule[key]['scheduled_principal_payment']
                 )
 
             prior_key = key
