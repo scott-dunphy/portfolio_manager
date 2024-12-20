@@ -458,7 +458,7 @@ class Property:
         adjusted_cash_flows['ownership_share'] = adjusted_cash_flows['ownership_share'].fillna(0)
 
         # Avoid multiplying specific columns
-        exclude_columns = {'partial_sale_proceeds', 'ownership_share'}
+        exclude_columns = {'partner_buyout_cost', 'partial_sale_proceeds', 'ownership_share'}
 
         numeric_columns = adjusted_cash_flows.select_dtypes(include='number').columns
 

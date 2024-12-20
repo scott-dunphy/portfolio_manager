@@ -194,6 +194,20 @@ class Loan:
                 self.schedule[key]['beginning_balance'] = 0
                 self.schedule[key]['ending_balance'] = self.loan_amount
             else:
+                if prepayment_done:
+                    # Zero out all cash flows after prepayment
+                    self.schedule[key].update({
+                        'beginning_balance': 0,
+                        'loan_draw': 0,
+                        'loan_paydown': 0,
+                        'interest_payment': 0,
+                        'scheduled_principal_payment': 0,
+                        'ending_balance': 0,
+                        'encumbered': 0
+                    })
+                    continue
+
+                # Normal Calculation Before Prepayment
                 self.schedule[key]['beginning_balance'] = self.schedule[prior_key]['ending_balance']
                 self.schedule[key]['loan_draw'] = self.get_loan_draw(key)
                 self.schedule[key]['loan_paydown'] = self.get_loan_paydown(key)
@@ -204,15 +218,25 @@ class Loan:
                 )
 
                 # Scheduled principal payment
-                if prepayment_done or i <= self.interest_only_periods or self.amortizing_periods == 0:
+                if i <= self.interest_only_periods or self.amortizing_periods == 0:
                     self.schedule[key]['scheduled_principal_payment'] = 0
                 else:
                     self.schedule[key]['scheduled_principal_payment'] = max(
                         0, self.amortizing_payment - self.schedule[key]['interest_payment']
                     )
 
-                # Apply maturity paydown
-                if key == self.maturity_date:
+                # **Prepayment Check**
+                if self.prepayment_date and key == self.prepayment_date and not prepayment_done:
+                    # Apply prepayment after the scheduled principal payment
+                    prepayment_amount = (
+                            self.schedule[key]['beginning_balance'] -
+                            self.schedule[key]['scheduled_principal_payment']
+                    )
+                    self.add_loan_paydown(prepayment_amount, key)
+                    prepayment_done = True
+
+                # Apply maturity paydown if the loan matures
+                if key == self.maturity_date and not prepayment_done:
                     maturity_paydown = (
                             self.schedule[key]['beginning_balance'] -
                             self.schedule[key]['scheduled_principal_payment']
