@@ -175,7 +175,6 @@ class Loan:
         prepayment_done = False
 
         for i, key in enumerate(self.schedule.keys()):
-
             # Foreclosure Check
             if self.foreclosure_date and key >= self.foreclosure_date:
                 self.schedule[key].update({
@@ -192,7 +191,11 @@ class Loan:
             # Initialize first period
             if i == 0:
                 self.schedule[key]['beginning_balance'] = 0
-                self.schedule[key]['ending_balance'] = self.loan_amount
+                self.schedule[key]['loan_draw'] = self.loan_amount  # Loan draw on funding date
+                self.schedule[key]['loan_paydown'] = 0
+                self.schedule[key]['interest_payment'] = 0
+                self.schedule[key]['scheduled_principal_payment'] = 0
+                self.schedule[key]['ending_balance'] = self.loan_amount  # Ending balance reflects the draw
             else:
                 if prepayment_done or self.schedule[prior_key]['ending_balance'] <= 0:
                     # Zero out all cash flows after prepayment or full amortization

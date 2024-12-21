@@ -3,7 +3,7 @@ from dateutil.relativedelta import relativedelta
 from calendar import monthrange
 from collections import OrderedDict
 from typing import Optional
-from .Loan import Loan
+from portfolio_manager.Loan import Loan
 import pandas as pd
 from itertools import accumulate
 import logging
@@ -154,7 +154,11 @@ class Property:
 
         # Update partner buyout cost and add the ownership change
         self.partner_buyout_cost = cost
-        self.add_ownership_change(buyout_date, new_ownership)
+        # Compute the ownership_change_date as the month-end following buyout_date
+        ownership_change_date = self.ensure_date(buyout_date + relativedelta(months=1))
+
+        # Record the ownership change at ownership_change_date
+        self.add_ownership_change(ownership_change_date, new_ownership)
 
     def add_partial_sale(self, partial_date, proceeds, share):
         """Reduce ownership based on a partial sale."""
@@ -232,7 +236,8 @@ class Property:
 
     def calculate_unfunded_equity(self):
         """Calculate the unfunded equity commitments using NOI and CapEx."""
-        if not self.equity_commitment or self.equity_commitment == 0 or pd.isna(self.equity_commitment):
+        #if not self.equity_commitment or self.equity_commitment == 0 or pd.isna(self.equity_commitment):
+        if pd.isna(self.construction_end) or self.construction_end is None:
             return [0] * len(self.month_list)
 
         # Initialize variables

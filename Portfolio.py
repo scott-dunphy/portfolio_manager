@@ -1,5 +1,6 @@
-from .Property import Property
-from .Loan import Loan
+from portfolio_manager.Property import Property
+from portfolio_manager.Loan import Loan
+from portfolio_manager.PreferredEquity import PreferredEquity
 import pandas as pd
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
@@ -16,6 +17,7 @@ class Portfolio:
 
         self.properties = {}  # Key: Property ID, Value: Property instance
         self.loans = {}
+        self.preferred_equity = {}
         self.analysis_start_date = date(2024,10,1)
         self.analysis_end_date = date(2026,10,1)
         self.beginning_cash = 0
@@ -51,6 +53,7 @@ class Portfolio:
         self.load_capital_flows()
         for property in self.properties.values():
             property.calculate_unfunded_equity()
+        self.load_preferred_equity()
 
 
 
@@ -78,6 +81,21 @@ class Portfolio:
         # Ensure the date is the last day of the month
         last_day = monthrange(input_date.year, input_date.month)[1]
         return input_date.replace(day=last_day)
+
+    def load_preferred_equity(self, df: Optional[pd.DataFrame] = None):
+        if df is None:
+            df = self.read_import_file('Preferred Equity')
+        df['id'] = df['id'].fillna('').astype(str)
+        for i, row in df.iterrows():
+            id = row['id']
+            property_id = str(row['property_id'])
+            loan_id = str(row['loan_id'])
+            ownership_share = row['ownership_share']
+            property = self.get_property(property_id)
+            loan = property.get_loan(loan_id)
+            preferred_equity = PreferredEquity(id, loan, ownership_share)
+            self.add_preferred_equity(preferred_equity)
+
 
     def load_properties(self, df: Optional[pd.DataFrame] = None):
         if df is None:
@@ -242,6 +260,9 @@ class Portfolio:
     def add_property(self, property):
         self.properties[property.id] = property
 
+    def add_preferred_equity(self, preferred_equity):
+        self.preferred_equity[preferred_equity.id] = preferred_equity
+
     def remove_property(self, id):
         if id in self.properties:
             del self.properties[id]
@@ -344,6 +365,29 @@ class Portfolio:
         df['encumbered'] = False
         return df
 
+    def concat_preferred_equity_schedules_df(self):
+        preferred_equities = []
+        for preferred_equity in self.preferred_equity.values():
+            df = preferred_equity.generate_preferred_equity_schedule_df()
+            df['preferred_equity_id'] = preferred_equity.id
+            cols = df.columns[-1:].append(df.columns[:-1])
+            preferred_equities.append(df[cols])
+        df = pd.concat(df)
+        df['encumbered'] = False
+        return df
+
+    def concat_preferred_equity_schedules_share_df(self):
+        preferred_equities = []
+        for preferred_equity in self.preferred_equity.values():
+            df = preferred_equity.generate_preferred_equity_schedule_share_df()
+            df['preferred_equity_id'] = preferred_equity.id
+            cols = df.columns[-1:].append(df.columns[:-1])
+            preferred_equities.append(df[cols])
+        df = pd.concat(preferred_equities)
+        df['encumbered'] = False
+        return df
+
+
     def concat_property_cash_flows(self):
         property_cash_flows = pd.concat([
             property.combine_loan_cash_flows_df()
@@ -372,19 +416,27 @@ class Portfolio:
         unsecured_loan_cash_flows['date'] = pd.to_datetime(unsecured_loan_cash_flows['date']).dt.date
         unsecured_loan_cash_flows.rename(columns={'loan_id':'Property Name'},inplace=True)
         unsecured_loan_cash_flows['Property Type'] = 'Fund-Level'
+
         portfolio_cash_flows = pd.concat([property_cash_flows, unsecured_loan_cash_flows], axis=0)
+        preferred_equity_cash_flows = self.concat_preferred_equity_schedules_share_df()
+        portfolio_cash_flows = pd.concat([portfolio_cash_flows, preferred_equity_cash_flows], axis=0)
+        portfolio_cash_flows.fillna(value=0, inplace=True)
 
         loan_capital = self.get_loan_capital_df().drop_duplicates(subset=['Property Name'])
         portfolio_cash_flows = portfolio_cash_flows.merge(loan_capital, how='left', on='Property Name')
+        portfolio_cash_flows.fillna(value=0, inplace=True)
         portfolio_cash_flows['loan_capital'] = portfolio_cash_flows['ownership_share'] * portfolio_cash_flows[
             'loan_capital'] / 12
         portfolio_cash_flows['loan_nii'] = portfolio_cash_flows['noi'] - portfolio_cash_flows['loan_capital']
         portfolio_cash_flows['encumbered_loan_nii'] = portfolio_cash_flows['loan_nii'] * portfolio_cash_flows['encumbered']
         portfolio_cash_flows['unencumbered_loan_nii'] = portfolio_cash_flows['loan_nii'] * portfolio_cash_flows['encumbered'].apply(lambda x: x==False)
+        portfolio_cash_flows['encumbered_market_value'] = portfolio_cash_flows['market_value'] * portfolio_cash_flows['encumbered'].apply(lambda x: x == True)
+        portfolio_cash_flows['unencumbered_market_value'] = portfolio_cash_flows['market_value'] * portfolio_cash_flows['encumbered'].apply(lambda x: x == False)
         portfolio_cash_flows['unsecured_interest_payment'] = portfolio_cash_flows['interest_payment'] * portfolio_cash_flows['Property Type'].apply(lambda x: x=='Fund-Level')
         portfolio_cash_flows['unsecured_debt_balance'] = portfolio_cash_flows['ending_balance'] * \
                                                              portfolio_cash_flows['Property Type'].apply(
                                                                  lambda x: x == 'Fund-Level')
+        portfolio_cash_flows['secured_debt_balance'] = portfolio_cash_flows['ending_balance'] - portfolio_cash_flows['unsecured_debt_balance']
 
         columns_order = [
             'date',
@@ -397,6 +449,8 @@ class Portfolio:
             'partial_sale_proceeds',
             'noi',
             'capex',
+            'preferred_equity_draw',
+            'preferred_equity_repayment',
             'beginning_balance',
             'loan_draw',
             'interest_payment',
@@ -408,9 +462,12 @@ class Portfolio:
             'loan_capital',
             'loan_nii',
             'encumbered_loan_nii',
+            'encumbered_market_value',
             'unencumbered_loan_nii',
+            'unencumbered_market_value',
             'unsecured_interest_payment',
-            'unsecured_debt_balance'
+            'unsecured_debt_balance',
+            'secured_debt_balance'
         ]
         portfolio_cash_flows = portfolio_cash_flows[columns_order]
         return portfolio_cash_flows
@@ -430,6 +487,7 @@ class Portfolio:
         portfolio_cash_flows.fillna(0, inplace=True)
         portfolio_cash_flows = portfolio_cash_flows.drop(columns=['Property Name', 'Property Type'])
         portfolio_cash_flows = portfolio_cash_flows.groupby("date").sum().reset_index()
+        portfolio_cash_flows.fillna(value=0, inplace=True)
 
         return portfolio_cash_flows
 
