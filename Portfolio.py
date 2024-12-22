@@ -317,6 +317,8 @@ class Portfolio:
         if id in self.loans:
             del self.loans[id]
 
+    def set_beginning_cash(self, cash):
+        self.beginning_cash = cash
     def get_loan(self, id):
         if id in self.loans:
             return self.loans.get(id)
@@ -513,11 +515,14 @@ class Portfolio:
             portfolio_cash_flows['scheduled_principal_payment'] +
             portfolio_cash_flows['capital_calls'] -
             portfolio_cash_flows['redemptions'] -
-            portfolio_cash_flows['distributions']
+            portfolio_cash_flows['distributions'] -
+            portfolio_cash_flows['preferred_equity_draw'] +
+            portfolio_cash_flows['preferred_equity_repayment']
 
     )
 
-        portfolio_cash_flows['beginning_cash'] = 0.0
+        portfolio_cash_flows['beginning_cash'] = self.beginning_cash if self.beginning_cash is not None else 0.0
+        portfolio_cash_flows['beginning_cash'] = portfolio_cash_flows['beginning_cash'].astype('float64')
         portfolio_cash_flows['ending_cash'] = 0.0
 
         # Set the first row's beginning cash to self.beginning_cash
@@ -537,6 +542,8 @@ class Portfolio:
                     portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('beginning_cash')]
                     + portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('Net Cash Flow')]
             )
+            if portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('ending_cash')] < 0:
+                logging.warning(f"Warning: Cash is negative in month {i+1}.")
 
         portfolio_cash_flows.drop(columns=['Property Type','Property Name','ownership_share'],inplace=True)
 
