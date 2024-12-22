@@ -12,18 +12,25 @@ import logging
 
 class Portfolio:
     def __init__(self,
-
+        analysis_start_date: date,
+        analysis_end_date: date,
+        initial_unfunded_equity: float = 0,
                  ):
 
         self.properties = {}  # Key: Property ID, Value: Property instance
         self.loans = {}
+        self.unfunded_equity = {}
         self.preferred_equity = {}
-        self.analysis_start_date = date(2024,10,1)
-        self.analysis_end_date = date(2026,10,1)
+        self.initial_unfunded_equity = initial_unfunded_equity
+        self.analysis_start_date = analysis_start_date
+        self.analysis_end_date = analysis_end_date
         self.beginning_cash = 0
         self.capital_calls = {}
         self.redemptions = {}
         self.distributions = {}
+        self.month_list = self.get_month_list(self.analysis_start_date, self.analysis_end_date)
+
+
         self.loan_capital = {
             'Apartment': 200,
             'Office': 0.15,
@@ -36,6 +43,40 @@ class Portfolio:
 
     def get_loan_capital(self, building_size, property_type):
         return building_size * self.loan_capital.get(property_type)
+
+    def set_initial_unfunded_equity(self, initial_unfunded_equity):
+        self.initial_unfunded_equity = initial_unfunded_equity
+
+    def get_month_list(self, start_date: date, end_date: date) -> list:
+        if start_date > end_date:
+            raise ValueError("start_date must be on or before end_date.")
+
+        month_list = []
+        current_date = self.ensure_date(start_date)
+
+        while current_date <= end_date:
+            month_list.append(current_date)
+            # Move to the next month
+            current_date = self.ensure_date(current_date + relativedelta(months=1))
+
+        return month_list
+
+    def calculate_unfunded_commitments(self):
+        for i, month in enumerate(self.month_list):
+            if i==0:
+                self.unfunded_equity[month] = self.initial_unfunded_equity
+            else:
+                prior_month = self.month_list[i-1]
+                unfunded = self.unfunded_equity[prior_month] - self.capital_calls.get(month,0)
+                self.unfunded_equity[month] = unfunded
+                if unfunded < 0:
+                    logging.warning(f"{month}: Capital calls exceed available unfunded commitments -- Unfunded: ${unfunded:,.0f}.")
+        return self.unfunded_equity
+
+    def get_unfunded_commitments_df(self):
+        unfunded = self.calculate_unfunded_commitments()
+        df = pd.DataFrame(list(unfunded.items()), columns=['date','unfunded_commitment'])
+        return df
 
     def get_loan_capital_df(self):
         loan_capital = []
@@ -54,6 +95,7 @@ class Portfolio:
         for property in self.properties.values():
             property.calculate_unfunded_equity()
         self.load_preferred_equity()
+        self.calculate_unfunded_commitments()
 
 
 
@@ -491,6 +533,7 @@ class Portfolio:
         portfolio_cash_flows = portfolio_cash_flows.groupby("date").sum().reset_index()
         portfolio_cash_flows.fillna(value=0, inplace=True)
 
+
         return portfolio_cash_flows
 
     def get_portfolio_cash_flows_share_df(self):
@@ -542,10 +585,12 @@ class Portfolio:
                     portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('beginning_cash')]
                     + portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('Net Cash Flow')]
             )
-            if portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('ending_cash')] < 0:
-                logging.warning(f"Warning: Cash is negative in month {i+1}.")
+            ending_cash = portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('ending_cash')]
+            if  ending_cash < 0:
+                logging.warning(f"Warning: Cash is negative in month {i+1}: ${ending_cash:,.0f}. Consider a revolver draw or capital call.")
 
         portfolio_cash_flows.drop(columns=['Property Type','Property Name','ownership_share'],inplace=True)
+        portfolio_cash_flows = portfolio_cash_flows.merge(self.get_unfunded_commitments_df(), how='left', on='date')
 
         return portfolio_cash_flows
 
