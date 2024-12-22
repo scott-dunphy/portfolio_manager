@@ -277,15 +277,22 @@ class Property:
 
         # Iterate through months to adjust market value
         for idx, month in enumerate(self.month_list):
-            if idx == 0:
-                # Set the initial market value for the first month
-                current_value = market_value
-            else:
-                # Apply CAPEX if within the construction period
-                capex = self.capex.get(month, 0) if self.construction_end and month <= self.construction_end else 0
+            if month < self.disposition_date:
+                if idx == 0:
+                    # Set the initial market value for the first month
+                    current_value = market_value
+                else:
+                    # Apply CAPEX if within the construction period
+                    capex = self.capex.get(month, 0) if self.construction_end and month <= self.construction_end else 0
 
-                # Update market value with growth and capex
-                current_value = current_value * growth_rate + capex
+                    # Update market value with growth and capex
+                    current_value = current_value * growth_rate + capex
+            elif month == self.disposition_date:
+                # Set market value to 0 on the disposition date
+                current_value = 0
+            else:
+                # Ensure market value remains 0 after disposition
+                current_value = 0
 
             market_values.append(current_value)
 
