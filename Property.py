@@ -475,8 +475,9 @@ class Property:
             columns=['date', 'ownership_share']
         )
 
-        cash_flows['date'] = pd.to_datetime(cash_flows['date'], errors='coerce')
-        ownership_series['date'] = pd.to_datetime(ownership_series['date'], errors='coerce')
+        # Ensure dates are `date` objects
+        cash_flows['date'] = cash_flows['date'].dt.date
+        ownership_series['date'] = ownership_series['date'].dt.date
 
         # Merge ownership series with cash flows
         adjusted_cash_flows = cash_flows.merge(ownership_series, on='date', how='left')
@@ -495,6 +496,35 @@ class Property:
         for col in numeric_columns:
             if col not in exclude_columns:
                 adjusted_cash_flows[col] *= adjusted_cash_flows['ownership_share']
+
+        # Adjust the market_value on buyout or partial sale dates
+        for event_date, column in [(self.partner_buyout_date, 'partner_buyout_cost'),
+                                   (self.partial_sale_date, 'partial_sale_proceeds')]:
+            if event_date:
+                event_date = self.ensure_date(event_date)
+                next_month = self.get_last_day_of_month(event_date + relativedelta(months=1))
+
+                if event_date in adjusted_cash_flows['date'].values and next_month in adjusted_cash_flows[
+                    'date'].values:
+                    ownership_share_event = adjusted_cash_flows.loc[
+                        adjusted_cash_flows['date'] == event_date, 'ownership_share'
+                    ].iloc[0]
+                    ownership_share_next = adjusted_cash_flows.loc[
+                        adjusted_cash_flows['date'] == next_month, 'ownership_share'
+                    ].iloc[0]
+
+                    market_value_event = adjusted_cash_flows.loc[
+                        adjusted_cash_flows['date'] == event_date, 'market_value'
+                    ].iloc[0]
+
+                    corrected_market_value = (
+                        market_value_event / ownership_share_event * ownership_share_next
+                        if ownership_share_event != 0 else 0
+                    )
+
+                    adjusted_cash_flows.loc[
+                        adjusted_cash_flows['date'] == event_date, 'market_value'
+                    ] = corrected_market_value
 
         return adjusted_cash_flows
 
