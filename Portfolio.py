@@ -481,6 +481,7 @@ class Portfolio:
         portfolio_cash_flows['encumbered_market_value'] = portfolio_cash_flows['market_value'] * portfolio_cash_flows['encumbered'].apply(lambda x: x == True)
         portfolio_cash_flows['unencumbered_market_value'] = portfolio_cash_flows['market_value'] * portfolio_cash_flows['encumbered'].apply(lambda x: x == False)
         portfolio_cash_flows['unsecured_interest_payment'] = portfolio_cash_flows['interest_payment'] * portfolio_cash_flows['Property Type'].apply(lambda x: x=='Fund-Level')
+        portfolio_cash_flows['secured_interest_payment'] = portfolio_cash_flows['interest_payment'] - portfolio_cash_flows['unsecured_interest_payment']
         portfolio_cash_flows['unsecured_debt_balance'] = portfolio_cash_flows['ending_balance'] * \
                                                              portfolio_cash_flows['Property Type'].apply(
                                                                  lambda x: x == 'Fund-Level')
@@ -510,10 +511,11 @@ class Portfolio:
             'loan_capital',
             'loan_nii',
             'encumbered_loan_nii',
-            'encumbered_market_value',
             'unencumbered_loan_nii',
             'unencumbered_market_value',
+            'encumbered_market_value',
             'unsecured_interest_payment',
+            'secured_interest_payment',
             'unsecured_debt_balance',
             'secured_debt_balance'
         ]
