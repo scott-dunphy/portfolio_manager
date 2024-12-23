@@ -420,10 +420,25 @@ class Property:
         self.execute_loan_func(loan_id, Loan.generate_loan_schedule_df)
         return
 
+    def check_loan_dates(self):
+        for loan in self.loans.values():
+            # Replace None with a fallback date for comparison
+            maturity_date = loan.maturity_date or date.max
+            prepayment_date = loan.prepayment_date or date.max
+            foreclosure_date = loan.foreclosure_date or date.max
+
+            # Find the earliest of the available dates
+            min_date = min(maturity_date, prepayment_date, foreclosure_date)
+
+            if min_date > self.disposition_date:
+                logging.warning(
+                    f"Loan dates extend beyond disposition. Property: {self.name}, Loan: {loan.id}"
+                )
     def combine_loan_schedules_df(self):
         if len(self.loans) == 0:
             return None
         else:
+            self.check_loan_dates()
             loans_ = [loan.generate_loan_schedule_df() for loan in self.loans.values()]
             df = pd.concat(loans_)
             df = df.groupby('date').sum().reset_index()
@@ -470,7 +485,15 @@ class Property:
         adjusted_cash_flows['ownership_share'] = adjusted_cash_flows['ownership_share'].fillna(0)
 
         # Avoid multiplying specific columns
-        exclude_columns = {'partner_buyout_cost', 'partial_sale_proceeds', 'ownership_share'}
+        exclude_columns = {'partner_buyout_cost',
+                           'partial_sale_proceeds',
+                           'ownership_share',
+                           'beginning_balance',
+                           'interest_payment',
+                           'scheduled_principal_payment',
+                           'loan_paydown',
+                           'loan_draw',
+                           'ending_balance'}
 
         numeric_columns = adjusted_cash_flows.select_dtypes(include='number').columns
 

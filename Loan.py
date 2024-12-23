@@ -167,7 +167,7 @@ class Loan:
         if self.get_commitment():
             prior_month = self.get_prior_month(draw_date)
             allowable_draw = self.unfunded.get(prior_month)
-            print(f"{self.id}: {allowable_draw}")
+            #print(f"{self.id}: {allowable_draw}")
             draw = min(draw, allowable_draw)
             if draw > 0:
                 self.loan_draws[draw_date] = draw
@@ -212,7 +212,6 @@ class Loan:
             total_paydown = existing_paydown + paydown
 
         self.loan_paydowns[paydown_date] = total_paydown
-        print(self.loan_paydowns)
 
         # Update the loan schedule directly
         self.schedule[paydown_date]['loan_paydown'] = total_paydown
