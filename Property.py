@@ -263,7 +263,7 @@ class Property:
 
             # Step 4: Log error if deficit remains (optional)
             if deficit > 0:
-                logging.error(f"Remaining deficit on {draw_date}: {deficit:.2f}")
+                logging.error(f"{self.name}: Remaining deficit on {draw_date}: {deficit:.2f}")
 
             # Step 5: Track current unfunded equity balance
             unfunded_equity_commitments.append(unfunded_equity)

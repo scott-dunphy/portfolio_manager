@@ -286,18 +286,22 @@ class Portfolio:
             df = self.read_import_file('Unsecured Loan Flows')
         df['id'] = df['id'].fillna('').astype(str)
 
+        # Sort flows by date to ensure sequential processing
+        df = df.sort_values(by=['date', 'id', 'flow_type'])
+
         for _, row in df.iterrows():
-            # Create Loan instance
-            id = row['id']
+            loan_id = row['id']
             flow_type = row['flow_type']
             date_ = self.ensure_date(row['date'])
             amount = row['amount']
+
+            # Sequentially apply draws and paydowns
             if flow_type == 'draw':
-                self.add_loan_draw(id,amount,date_)
+                self.add_loan_draw(loan_id, amount, date_)
             elif flow_type == 'paydown':
-                self.add_loan_paydown(id, amount,date_)
+                self.add_loan_paydown(loan_id, amount, date_)
             else:
-                raise ValueError("No such flow type.")
+                raise ValueError(f"Invalid flow type: {flow_type}")
 
     def add_property(self, property):
         self.properties[property.id] = property

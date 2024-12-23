@@ -4,7 +4,9 @@ from dateutil.relativedelta import relativedelta
 from calendar import monthrange
 from collections import OrderedDict
 from typing import Optional
-import pandas as pd
+import logging
+
+
 class Loan:
     def __init__(self,
                  id: str,
@@ -14,11 +16,20 @@ class Loan:
                  maturity_date: date,
                  payment_type: str,
                  property_id: Optional[str] = None,
-                 interest_only_periods: Optional[int]=0,
-                 amortizing_periods: Optional[int]=360,
+                 interest_only_periods: Optional[int] = 0,
+                 amortizing_periods: Optional[int] = 360,
                  commitment: Optional[float] = None,
                  prepayment_date: Optional[date] = None,
                  foreclosure_date: Optional[date] = None):
+        # Configure logging
+        self.logger = logging.getLogger(__name__)
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+        handler.setFormatter(formatter)
+        if not self.logger.handlers:
+            self.logger.addHandler(handler)
+        self.logger.setLevel(logging.WARNING)
+
         if loan_amount < 0:
             raise ValueError("Loan amount must be positive.")
         if rate < 0 or rate > 1:
@@ -27,8 +38,9 @@ class Loan:
             raise ValueError("Funding date must precede maturity date.")
         if payment_type not in ['Actual/360', '30/360', 'Actual/365']:
             raise ValueError(f"Unsupported payment type: {payment_type}")
+
         self.id = id
-        self.property_id = str(property_id)
+        self.property_id = str(property_id) if property_id else None
         self.loan_amount = loan_amount
         self.rate = rate
         self.fund_date = self.get_end_of_month(fund_date)
@@ -50,7 +62,7 @@ class Loan:
         else:
             self.prepayment_date = None
 
-    def get_end_of_month(self, input_date: date) -> date:
+    def get_end_of_month(self, input_date: date) -> Optional[date]:
         if pd.isna(input_date):  # Handle NaN or NaT
             return None
 
@@ -69,26 +81,59 @@ class Loan:
     def get_prior_month(self, input_date: date) -> date:
         """Returns the last day of the prior month."""
         prior_month = input_date - relativedelta(months=1)
-        return prior_month.replace(day=1) + relativedelta(day=31)
+        return prior_month.replace(day=monthrange(prior_month.year, prior_month.month)[1])
 
     def get_commitment(self):
         return self.commitment
 
+    def initialize_unfunded_schedule(self):
+        """Create an initial unfunded schedule based on the commitment."""
+        if not self.commitment:
+            self.unfunded = OrderedDict({month: 0 for month in self.monthly_dates})
+            return
+
+        # Initialize with full commitment at the start
+        unfunded = OrderedDict()
+        for month in self.monthly_dates:
+            if month < self.fund_date:
+                unfunded[month] = 0  # No commitment before funding date
+            elif month == self.fund_date:
+                unfunded[month] = self.commitment - self.loan_amount
+            else:
+                unfunded[month] = self.commitment
+
+        self.unfunded = unfunded
+
+    def adjust_unfunded_schedule(self):
+        """Adjust the unfunded schedule based on draws and paydowns."""
+        if not self.commitment:
+            return
+
+        for i, month in enumerate(self.monthly_dates):
+            if i == 0:
+                # Initial funding month
+                self.unfunded[month] = max(
+                    0,
+                    self.unfunded[month] - self.loan_draws[month] + self.loan_paydowns[month]
+                )
+            else:
+                # Adjust unfunded based on prior month, current draws, and paydowns
+                prior_month = self.get_prior_month(month)
+                self.unfunded[month] = max(
+                    0,
+                    self.unfunded[prior_month]
+                    - self.loan_draws[month]
+                    + self.loan_paydowns[month]
+                )
+
     def calculate_unfunded(self):
-        if self.commitment:
-            self.loan_draws[self.fund_date] = self.loan_amount
-            unfunded = self.initialize_monthly_activity()
-            i=0
-            for month,value in unfunded.items():
-                if i==0:
-                    unfunded[month] = self.get_commitment() - self.get_loan_draw(month) + self.get_loan_paydown(month)
-                else:
-                    prior_month = self.get_prior_month(month)
-                    unfunded[month] = unfunded[prior_month] - self.get_loan_draw(month) + self.get_loan_paydown(month)
-                i += 1
-            self.unfunded = unfunded
-            return unfunded
-        return
+        """Calculate the unfunded commitment schedule."""
+        # Step 1: Initialize the baseline schedule
+        self.initialize_unfunded_schedule()
+
+        # Step 2: Adjust based on draws and paydowns
+        self.adjust_unfunded_schedule()
+
     def calculate_interest(self, balance: float, start_date: date, end_date: date) -> float:
         date_delta = (end_date - start_date).days
         payment_type_numerators = {'Actual/360': date_delta, '30/360': 30, 'Actual/365': date_delta}
@@ -100,7 +145,7 @@ class Loan:
     def calculate_amortizing_payment(self, loan_balance):
         if self.amortizing_periods == 0:
             return 0
-        # Convert annual rate to monthly rate)
+        # Convert annual rate to monthly rate
         monthly_rate = self.rate / 12
         # Total number of payments
         total_payments = self.amortizing_periods
@@ -110,39 +155,85 @@ class Loan:
             return loan_balance / total_payments
         else:
             return loan_balance * (monthly_rate * (1 + monthly_rate) ** total_payments) / (
-                        (1 + monthly_rate) ** total_payments - 1)
+                    (1 + monthly_rate) ** total_payments - 1)
 
     def initialize_monthly_activity(self) -> OrderedDict:
         return OrderedDict({
-            month:0 for month in self.monthly_dates
+            month: 0 for month in self.monthly_dates
         })
 
     def add_loan_draw(self, draw: float, draw_date: date):
+        draw_date = self.get_end_of_month(draw_date)
         if self.get_commitment():
             prior_month = self.get_prior_month(draw_date)
-            draw = min(draw, self.unfunded[prior_month])
-            self.loan_draws[draw_date] = draw
-            self.calculate_unfunded()
-            self.generate_loan_schedule()
-            return draw
+            allowable_draw = self.unfunded.get(prior_month)
+            print(f"{self.id}: {allowable_draw}")
+            draw = min(draw, allowable_draw)
+            if draw > 0:
+                self.loan_draws[draw_date] = draw
+                self.calculate_unfunded()
+                self.generate_loan_schedule()
+                return draw
+            else:
+                self.logger.warning(f"{self.id}: No available commitment to draw on {draw_date}.")
+                return 0
+        self.logger.warning("No commitment set for the loan.")
+        return 0
 
     def add_loan_paydown(self, paydown: float, paydown_date: date):
-        if paydown_date in self.schedule:
-            # Apply paydown without regenerating the entire schedule
-            paydown = min(paydown, self.schedule[paydown_date]['beginning_balance'])
-            self.loan_paydowns[paydown_date] = paydown
+        paydown_date = self.get_end_of_month(paydown_date)
+        if paydown_date not in self.schedule:
+            self.logger.warning(f"Paydown date {paydown_date} is not in the loan schedule.")
+            return  # Alternatively, raise an exception
 
-            # Update the loan schedule directly
-            self.schedule[paydown_date]['loan_paydown'] = paydown
-            self.schedule[paydown_date]['ending_balance'] = (
-                self.schedule[paydown_date]['beginning_balance'] - paydown
+        # Calculate the allowable paydown: beginning_balance + loan_draw for the month
+        beginning_balance = self.schedule[paydown_date]['beginning_balance']
+        loan_draw = self.schedule[paydown_date]['loan_draw']
+        allowable_paydown = beginning_balance + loan_draw
+
+        if paydown > allowable_paydown:
+            self.logger.warning(
+                f"Attempted paydown of {paydown:.2f} on {paydown_date} exceeds the allowable amount of {allowable_paydown:.2f}. "
+                f"Paydown will be limited to {allowable_paydown:.2f}."
             )
+            paydown = allowable_paydown
+
+        # Apply paydown without regenerating the entire schedule
+        existing_paydown = self.loan_paydowns.get(paydown_date, 0)
+        total_paydown = existing_paydown + paydown
+
+        # Ensure total paydown does not exceed allowable amount
+        if total_paydown > allowable_paydown:
+            self.logger.warning(
+                f"Total paydown of {total_paydown:.2f} on {paydown_date} exceeds the allowable amount of {allowable_paydown:.2f}. "
+                f"Paydown will be limited to {allowable_paydown - existing_paydown:.2f}."
+            )
+            paydown = allowable_paydown - existing_paydown
+            total_paydown = existing_paydown + paydown
+
+        self.loan_paydowns[paydown_date] = total_paydown
+        print(self.loan_paydowns)
+
+        # Update the loan schedule directly
+        self.schedule[paydown_date]['loan_paydown'] = total_paydown
+        self.schedule[paydown_date]['ending_balance'] = (
+                self.schedule[paydown_date]['beginning_balance'] +
+                self.schedule[paydown_date]['loan_draw'] -
+                self.schedule[paydown_date]['loan_paydown'] -
+                self.schedule[paydown_date]['scheduled_principal_payment']
+        )
+
+        # **Recalculate Unfunded Commitment**
+        self.calculate_unfunded()
+
+        # **Regenerate the Schedule to Reflect the Updated Unfunded Commitment**
+        self.generate_loan_schedule()
 
     def get_loan_draw(self, draw_date: date):
-        return self.loan_draws[draw_date]
+        return self.loan_draws.get(draw_date, 0)
 
     def get_loan_paydown(self, paydown_date: date):
-        return self.loan_paydowns[paydown_date]
+        return self.loan_paydowns.get(paydown_date, 0)
 
     def initialize_loan_schedule(self) -> OrderedDict:
         """Initialize the loan schedule as an ordered dictionary."""
@@ -192,13 +283,13 @@ class Loan:
             if i == 0:
                 self.schedule[key]['beginning_balance'] = 0
                 self.schedule[key]['loan_draw'] = self.loan_amount  # Loan draw on funding date
-                self.schedule[key]['loan_paydown'] = 0
+                self.schedule[key]['loan_paydown'] = self.get_loan_paydown(key)
                 self.schedule[key]['interest_payment'] = 0
                 self.schedule[key]['scheduled_principal_payment'] = 0
-                self.schedule[key]['ending_balance'] = self.loan_amount  # Ending balance reflects the draw
+                self.schedule[key]['ending_balance'] = self.loan_amount - self.schedule[key]['loan_paydown']
             else:
-                if prepayment_done or self.schedule[prior_key]['ending_balance'] <= 0:
-                    # Zero out all cash flows after prepayment or full amortization
+                # Zero out all cash flows after prepayment is done and balance is zero
+                if prepayment_done and self.schedule[prior_key]['ending_balance'] <= 0:
                     self.schedule[key].update({
                         'beginning_balance': 0,
                         'loan_draw': 0,
@@ -211,21 +302,21 @@ class Loan:
                     continue
 
                 # Normal Loan Calculations Before Prepayment or Full Amortization
-                self.schedule[key]['beginning_balance'] = max(0, self.schedule[prior_key]['ending_balance'])
+                beginning_balance = self.schedule[prior_key]['ending_balance']
+                self.schedule[key]['beginning_balance'] = max(0, beginning_balance)
                 self.schedule[key]['loan_draw'] = self.get_loan_draw(key)
-                self.schedule[key]['loan_paydown'] = max(0, self.get_loan_paydown(key))
+                self.schedule[key]['loan_paydown'] = self.get_loan_paydown(key)
 
                 # Calculate interest
                 self.schedule[key]['interest_payment'] = self.calculate_interest(
                     self.schedule[key]['beginning_balance'], prior_key, key
                 )
 
-                # **Scheduled Principal Payment (Only if Amortizing)**
+                # Scheduled Principal Payment (Only if Amortizing)
                 if self.amortizing_periods > 0 and i > self.interest_only_periods:
                     scheduled_principal = max(
                         0, self.amortizing_payment - self.schedule[key]['interest_payment']
                     )
-
                     # Avoid overpaying past zero balance
                     scheduled_principal = min(
                         scheduled_principal, self.schedule[key]['beginning_balance']
@@ -234,23 +325,41 @@ class Loan:
                 else:
                     self.schedule[key]['scheduled_principal_payment'] = 0
 
-                # **Prepayment Check Without Double-Counting Scheduled Principal**
+                # Prepayment Check Without Double-Counting Scheduled Principal
                 if self.prepayment_date and key == self.prepayment_date and not prepayment_done:
                     # Calculate prepayment amount after applying scheduled principal payment
                     prepayment_amount = max(
                         0, self.schedule[key]['beginning_balance'] -
                            self.schedule[key]['scheduled_principal_payment']
                     )
-                    self.add_loan_paydown(prepayment_amount, key)
+                    # Directly set the paydown without calling add_loan_paydown
+                    allowable_paydown = self.schedule[key]['beginning_balance'] + self.schedule[key]['loan_draw']
+                    if prepayment_amount > allowable_paydown:
+                        self.logger.warning(
+                            f"Attempted prepayment of {prepayment_amount:.2f} on {key} exceeds the allowable amount of {allowable_paydown:.2f}. "
+                            f"Prepayment will be limited to {allowable_paydown:.2f}."
+                        )
+                        prepayment_amount = allowable_paydown
+                    self.loan_paydowns[key] = prepayment_amount
+                    self.schedule[key]['loan_paydown'] = prepayment_amount
                     prepayment_done = True
 
-                # Apply maturity paydown if the loan matures
+                # Apply maturity paydown if the loan matures and prepayment hasn't been done
                 if key == self.maturity_date and not prepayment_done:
                     maturity_paydown = max(
                         0, self.schedule[key]['beginning_balance'] -
                            self.schedule[key]['scheduled_principal_payment']
                     )
-                    self.add_loan_paydown(maturity_paydown, key)
+                    # Directly set the paydown without calling add_loan_paydown
+                    allowable_paydown = self.schedule[key]['beginning_balance'] + self.schedule[key]['loan_draw']
+                    if maturity_paydown > allowable_paydown:
+                        self.logger.warning(
+                            f"Attempted maturity paydown of {maturity_paydown:.2f} on {key} exceeds the allowable amount of {allowable_paydown:.2f}. "
+                            f"Maturity paydown will be limited to {allowable_paydown:.2f}."
+                        )
+                        maturity_paydown = allowable_paydown
+                    self.loan_paydowns[key] = maturity_paydown
+                    self.schedule[key]['loan_paydown'] = maturity_paydown
 
                 # Update ending balance
                 self.schedule[key]['ending_balance'] = max(
@@ -267,10 +376,5 @@ class Loan:
     def generate_loan_schedule_df(self):
         df = pd.DataFrame.from_dict(self.generate_loan_schedule()).T
         df.reset_index(inplace=True)
-        df.rename(columns={'index':'date'},inplace=True)
+        df.rename(columns={'index': 'date'}, inplace=True)
         return df
-
-
-
-
-
