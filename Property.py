@@ -488,12 +488,7 @@ class Property:
         exclude_columns = {'partner_buyout_cost',
                            'partial_sale_proceeds',
                            'ownership_share',
-                           'beginning_balance',
-                           'interest_payment',
-                           'scheduled_principal_payment',
-                           'loan_paydown',
-                           'loan_draw',
-                           'ending_balance'}
+                           }
 
         numeric_columns = adjusted_cash_flows.select_dtypes(include='number').columns
 
