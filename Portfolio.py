@@ -545,37 +545,40 @@ class Portfolio:
     def get_portfolio_cash_flows_share_df(self):
         portfolio_cash_flows = self.concat_property_cash_flows_at_share_with_unsecured_loans()
 
+        # Group by date and sum cash flows
         portfolio_cash_flows = portfolio_cash_flows.groupby("date").sum().reset_index()
 
+        # Map capital calls, redemptions, and distributions
         portfolio_cash_flows['capital_calls'] = portfolio_cash_flows['date'].map(self.capital_calls).fillna(0)
         portfolio_cash_flows['redemptions'] = portfolio_cash_flows['date'].map(self.redemptions).fillna(0)
         portfolio_cash_flows['distributions'] = portfolio_cash_flows['date'].map(self.distributions).fillna(0)
 
+        # Calculate net cash flow
         portfolio_cash_flows['Net Cash Flow'] = (
-            portfolio_cash_flows['noi'] -
-            portfolio_cash_flows['capex'] -
-            portfolio_cash_flows['acquisition_cost'] +
-            portfolio_cash_flows['disposition_price'] -
-            portfolio_cash_flows['partner_buyout_cost'] +
-            portfolio_cash_flows['partial_sale_proceeds'] +
-            portfolio_cash_flows['loan_draw'] -
-            portfolio_cash_flows['loan_paydown'] -
-            portfolio_cash_flows['interest_payment'] -
-            portfolio_cash_flows['scheduled_principal_payment'] +
-            portfolio_cash_flows['capital_calls'] -
-            portfolio_cash_flows['redemptions'] -
-            portfolio_cash_flows['distributions'] -
-            portfolio_cash_flows['preferred_equity_draw'] +
-            portfolio_cash_flows['preferred_equity_repayment']
+                portfolio_cash_flows['noi'] -
+                portfolio_cash_flows['capex'] -
+                portfolio_cash_flows['acquisition_cost'] +
+                portfolio_cash_flows['disposition_price'] -
+                portfolio_cash_flows['partner_buyout_cost'] +
+                portfolio_cash_flows['partial_sale_proceeds'] +
+                portfolio_cash_flows['loan_draw'] -
+                portfolio_cash_flows['loan_paydown'] -
+                portfolio_cash_flows['interest_payment'] -
+                portfolio_cash_flows['scheduled_principal_payment'] +
+                portfolio_cash_flows['capital_calls'] -
+                portfolio_cash_flows['redemptions'] -
+                portfolio_cash_flows['distributions'] -
+                portfolio_cash_flows['preferred_equity_draw'] +
+                portfolio_cash_flows['preferred_equity_repayment']
+        )
 
-    )
-
-        portfolio_cash_flows['beginning_cash'] = self.beginning_cash if self.beginning_cash is not None else 0.0
-        portfolio_cash_flows['beginning_cash'] = portfolio_cash_flows['beginning_cash'].astype('float64')
+        # Initialize beginning cash and ensure it's for the analysis_start_date month
+        portfolio_cash_flows['beginning_cash'] = 0.0
         portfolio_cash_flows['ending_cash'] = 0.0
-
-        # Set the first row's beginning cash to self.beginning_cash
-        portfolio_cash_flows.iloc[0, portfolio_cash_flows.columns.get_loc('beginning_cash')] = self.beginning_cash
+        if self.analysis_start_date in portfolio_cash_flows['date'].values:
+            portfolio_cash_flows.loc[
+                portfolio_cash_flows['date'] == self.analysis_start_date, 'beginning_cash'
+            ] = self.beginning_cash if self.beginning_cash is not None else 0.0
 
         # Calculate ending cash for the first row
         portfolio_cash_flows.iloc[0, portfolio_cash_flows.columns.get_loc('ending_cash')] = (
@@ -583,19 +586,23 @@ class Portfolio:
                 + portfolio_cash_flows.iloc[0, portfolio_cash_flows.columns.get_loc('Net Cash Flow')]
         )
 
-        # For subsequent rows, beginning_cash is the previous row's ending_cash
+        # Iterate for subsequent months
         for i in range(1, len(portfolio_cash_flows)):
             portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('beginning_cash')] = \
-            portfolio_cash_flows.iloc[i - 1, portfolio_cash_flows.columns.get_loc('ending_cash')]
+                portfolio_cash_flows.iloc[i - 1, portfolio_cash_flows.columns.get_loc('ending_cash')]
+
             portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('ending_cash')] = (
                     portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('beginning_cash')]
                     + portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('Net Cash Flow')]
             )
-            ending_cash = portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('ending_cash')]
-            if  ending_cash < 0:
-                logging.warning(f"Warning: Cash is negative in month {i+1}: ${ending_cash:,.0f}. Consider a revolver draw or capital call.")
 
-        portfolio_cash_flows.drop(columns=['Property Type','Property Name','ownership_share'],inplace=True)
+            # Check for negative cash and log a warning
+            ending_cash = portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('ending_cash')]
+            if ending_cash < 0:
+                logging.warning(
+                    f"Warning: Cash is negative in month {i + 1}: ${ending_cash:,.0f}. Consider a revolver draw or capital call.")
+
+        # Add unfunded commitments
         portfolio_cash_flows = portfolio_cash_flows.merge(self.get_unfunded_commitments_df(), how='left', on='date')
 
         return portfolio_cash_flows
