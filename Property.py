@@ -77,18 +77,10 @@ class Property:
 
         if self.disposition_date and not pd.isna(self.disposition_date):
             next_month = self.disposition_date + relativedelta(months=1)
-            last_day_of_next_month = next_month.replace(
-                day=monthrange(next_month.year, next_month.month)[1]
-            )
+            last_day_of_next_month = next_month.replace(day=monthrange(next_month.year, next_month.month)[1])
             self.add_ownership_change(last_day_of_next_month, 0)
 
-        if self.partial_sale_date and not pd.isna(self.partial_sale_date) and self.partial_sale_percent != 0:
-            self.add_partial_sale(self.partial_sale_date, self.partial_sale_proceeds, -self.partial_sale_percent)
-
-        if self.partner_buyout_date and not pd.isna(self.partner_buyout_date) and self.partner_buyout_percent != 0:
-            self.add_partner_buyout(self.partner_buyout_date, self.partner_buyout_cost, self.partner_buyout_percent)
-
-        self.add_ownership_change(self.get_last_day_of_month(self.disposition_date + relativedelta(days=1)), 0)
+        self.process_ownership_events()
         self.unfunded_equity_commitments = []
 
     def get_last_day_of_month(self, input_date) -> date:
@@ -122,6 +114,43 @@ class Property:
         last_day = monthrange(input_date.year, input_date.month)[1]
         return input_date.replace(day=last_day)
 
+    def process_ownership_events(self):
+        """Process all ownership changes (buyouts, partial sales, etc.) in chronological order."""
+        events = []
+
+        # Initial acquisition ownership
+        if self.acquisition_date:
+            events.append((self.acquisition_date, self.ownership))
+
+        # Disposition event
+        if self.disposition_date:
+            events.append((self.disposition_date, 0.0))
+
+        # Sort all events by date
+        events.sort(key=lambda x: x[0])
+
+        # Sequentially process each event, applying buyouts and sales
+        current_ownership = self.ownership
+
+        if self.partner_buyout_date and self.partner_buyout_percent != 0:
+            # Apply partner buyout to current ownership the month after the buyout date
+            effective_date = self.get_last_day_of_month(self.partner_buyout_date + relativedelta(months=1))
+            new_ownership = min(current_ownership + self.partner_buyout_percent, 1.0)
+            events.append((effective_date, new_ownership))
+            current_ownership = new_ownership  # Update for subsequent calculations
+
+        if self.partial_sale_date and self.partial_sale_percent != 0:
+            # Apply partial sale to current ownership the month after the sale date
+            effective_date = self.get_last_day_of_month(self.partial_sale_date + relativedelta(months=1))
+            new_ownership = max(current_ownership - self.partial_sale_percent, 0.0)
+            events.append((effective_date, new_ownership))
+            current_ownership = new_ownership  # Update for subsequent calculations
+
+        # Sort events again in case the partner buyout and partial sale added new dates
+        events.sort(key=lambda x: x[0])
+
+        # Reassign the processed events to ownership changes
+        self.ownership_changes = [(self.get_last_day_of_month(date), ownership) for date, ownership in events]
     def add_ownership_change(self, change_date: date, new_ownership: float):
         """Add an ownership change event."""
         change_date = self.ensure_date(change_date)  # Ensure the date is a `datetime.date` object
@@ -130,72 +159,44 @@ class Property:
 
     def get_ownership_share(self, query_date: date) -> float:
         """Get the ownership share for a specific date."""
-        # Ensure ownership changes are sorted
-        self.ownership_changes.sort()
+        self.process_ownership_events()  # Ensure events are processed before querying
 
-        # Iterate over ownership changes in reverse to find the most recent one
+        if not self.ownership_changes:
+            return 0.0  # Default to zero if no changes exist
+
         for change_date, ownership in reversed(self.ownership_changes):
             if query_date >= change_date:
                 return ownership
 
-        # Default to 0 ownership if no changes are before the query date
         return 0.0
 
-    def add_partner_buyout(self, buyout_date, cost, share):
-        """Add a partner buyout event by increasing the current ownership share."""
-        # Ensure date is properly formatted
-        buyout_date = self.ensure_date(buyout_date)
-
-        # Get the current ownership share at the buyout date
-        current_ownership = self.get_ownership_share(buyout_date)
-
-        # Calculate the new ownership share
-        new_ownership = current_ownership + share
-
-        # Update partner buyout cost and add the ownership change
-        self.partner_buyout_cost = cost
-        # Compute the ownership_change_date as the month-end following buyout_date
-        ownership_change_date = self.ensure_date(buyout_date + relativedelta(months=1))
-
-        # Record the ownership change at ownership_change_date
-        self.add_ownership_change(ownership_change_date, new_ownership)
-
-    def add_partial_sale(self, partial_date, proceeds, share):
-        """Reduce ownership based on a partial sale."""
-        partial_date = self.ensure_date(partial_date)
-
-        # Get the current ownership share
-        current_ownership = self.get_ownership_share(partial_date)
-
-        # Calculate new ownership after partial sale
-        new_ownership = max(current_ownership + share, 0)  # Prevent negative ownership
-
-        # Update the partial sale proceeds and record ownership change
+    def add_partial_sale(self, partial_date, proceeds, sale_percent):
+        """Record a partial sale event."""
+        self.partial_sale_date = self.ensure_date(partial_date)
         self.partial_sale_proceeds = proceeds
-        self.add_ownership_change(partial_date, new_ownership)
+        self.partial_sale_percent = sale_percent
+        self.process_ownership_events()
+
+    def add_partner_buyout(self, buyout_date, cost, buyout_percent):
+        """Record a partner buyout event."""
+        self.partner_buyout_date = self.ensure_date(buyout_date)
+        self.partner_buyout_cost = cost
+        self.partner_buyout_percent = buyout_percent
+        self.process_ownership_events()
 
     def generate_ownership_series(self):
         """Generate a time series of ownership percentages without mutating self.ownership_changes."""
-        # Make a sorted copy of the ownership changes so we don't alter the original
-        changes = sorted(self.ownership_changes, key=lambda x: x[0])
+        self.process_ownership_events()  # Ensure events are processed before generating the series
 
         ownership_series = {}
         current_ownership = self.ownership
-        change_idx = 0
+        changes = sorted(self.ownership_changes, key=lambda x: x[0])
 
         for month in self.month_list:
-            # Apply all ownership changes up to and including this month
-            while change_idx < len(changes) and changes[change_idx][0] <= month:
-                # Update current ownership based on the event
-                _, current_ownership = changes[change_idx]
-                change_idx += 1
+            while changes and changes[0][0] <= month:
+                current_ownership = changes.pop(0)[1]
 
-            # Record the current ownership for this month
             ownership_series[month] = current_ownership
-
-            # Stop updating once we reach or surpass the disposition date
-            if self.disposition_date and month >= self.disposition_date:
-                break
 
         return ownership_series
 
@@ -476,8 +477,8 @@ class Property:
         )
 
         # Ensure dates are `date` objects
-        cash_flows['date'] = cash_flows['date'].dt.date
-        ownership_series['date'] = ownership_series['date'].dt.date
+        cash_flows['date'] = cash_flows['date'].apply(lambda x: x.date() if isinstance(x, datetime) else x)
+        ownership_series['date'] = ownership_series['date'].apply(lambda x: x.date() if isinstance(x, datetime) else x)
 
         # Merge ownership series with cash flows
         adjusted_cash_flows = cash_flows.merge(ownership_series, on='date', how='left')
