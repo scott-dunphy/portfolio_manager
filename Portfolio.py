@@ -414,26 +414,33 @@ class Portfolio:
         return df
 
     def concat_preferred_equity_schedules_df(self):
+        if not self.preferred_equity:  # No preferred equity
+            logging.info("No preferred equity to process.")
+            return pd.DataFrame(columns=['date', 'preferred_equity_id', 'encumbered'])  # Adjust columns as needed
+
         preferred_equities = []
         for preferred_equity in self.preferred_equity.values():
             df = preferred_equity.generate_preferred_equity_schedule_df()
             df['preferred_equity_id'] = preferred_equity.id
             cols = df.columns[-1:].append(df.columns[:-1])
             preferred_equities.append(df[cols])
-        df = pd.concat(df)
-        df['encumbered'] = False
-        return df
+
+        return pd.concat(preferred_equities)
 
     def concat_preferred_equity_schedules_share_df(self):
+        if not self.preferred_equity:  # No preferred equity
+            logging.info("No preferred equity to process.")
+            return pd.DataFrame(
+                columns=['date', 'preferred_equity_id', 'ownership_share', 'encumbered'])  # Adjust columns
+
         preferred_equities = []
         for preferred_equity in self.preferred_equity.values():
             df = preferred_equity.generate_preferred_equity_schedule_share_df()
             df['preferred_equity_id'] = preferred_equity.id
             cols = df.columns[-1:].append(df.columns[:-1])
             preferred_equities.append(df[cols])
-        df = pd.concat(preferred_equities)
-        df['encumbered'] = False
-        return df
+
+        return pd.concat(preferred_equities)
 
 
     def concat_property_cash_flows(self):
@@ -466,7 +473,15 @@ class Portfolio:
         unsecured_loan_cash_flows['Property Type'] = 'Fund-Level'
 
         portfolio_cash_flows = pd.concat([property_cash_flows, unsecured_loan_cash_flows], axis=0)
-        preferred_equity_cash_flows = self.concat_preferred_equity_schedules_share_df()
+        # Handle preferred equity cash flows
+        if not self.preferred_equity:
+            preferred_equity_cash_flows = pd.DataFrame({
+                'date': pd.Series(dtype='object'),
+                'preferred_equity_draw': pd.Series(dtype='float'),
+                'preferred_equity_repayment': pd.Series(dtype='float')
+            })
+        else:
+            preferred_equity_cash_flows = self.concat_preferred_equity_schedules_share_df()
         portfolio_cash_flows = pd.concat([portfolio_cash_flows, preferred_equity_cash_flows], axis=0)
         portfolio_cash_flows.fillna(value=0, inplace=True)
 
