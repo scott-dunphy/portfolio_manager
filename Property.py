@@ -189,10 +189,15 @@ class Property:
         self.process_ownership_events()  # Ensure events are processed before generating the series
 
         ownership_series = {}
-        current_ownership = self.ownership
+        current_ownership = 0.0  # Default ownership before acquisition
         changes = sorted(self.ownership_changes, key=lambda x: x[0])
 
         for month in self.month_list:
+            # Skip months before acquisition
+            if self.acquisition_date and month < self.acquisition_date:
+                continue
+
+            # Apply ownership changes
             while changes and changes[0][0] <= month:
                 current_ownership = changes.pop(0)[1]
 
@@ -486,14 +491,14 @@ class Property:
         # Fill missing ownership shares with zero
         adjusted_cash_flows['ownership_share'] = adjusted_cash_flows['ownership_share'].fillna(0)
 
+        # Filter out rows before acquisition date
+        if self.acquisition_date:
+            adjusted_cash_flows = adjusted_cash_flows[adjusted_cash_flows['date'] >= self.acquisition_date]
+
         # Avoid multiplying specific columns
-        exclude_columns = {'partner_buyout_cost',
-                           'partial_sale_proceeds',
-                           'ownership_share',
-                           }
+        exclude_columns = {'partner_buyout_cost', 'partial_sale_proceeds', 'ownership_share'}
 
         numeric_columns = adjusted_cash_flows.select_dtypes(include='number').columns
-
         for col in numeric_columns:
             if col not in exclude_columns:
                 adjusted_cash_flows[col] *= adjusted_cash_flows['ownership_share']
