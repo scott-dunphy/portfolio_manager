@@ -124,7 +124,8 @@ class Property:
 
         # Disposition event
         if self.disposition_date:
-            events.append((self.disposition_date, 0.0))
+            effective_date = self.get_last_day_of_month(self.disposition_date + relativedelta(months=1))
+            events.append((effective_date, 0.0))
 
         # Sort all events by date
         events.sort(key=lambda x: x[0])
