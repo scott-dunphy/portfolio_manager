@@ -158,6 +158,9 @@ class PreferredEquity:
         return df_merged[['date', 'Property Name', 'Property Type', 'ownership_share','noi', 'preferred_equity_draw',
                            'preferred_equity_repayment', 'market_value']].copy()
 
+    def get_preferred_equity_schedule_share_df_by_date(self, start_date, end_date):
+        df = self.generate_preferred_equity_schedule_share_df()
+        return df.loc[ (df.date >= start_date) & (df.date <= end_date)]
     # ---------------------------------------------------------------------
     #                       HELPER METHODS
     # ---------------------------------------------------------------------

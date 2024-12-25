@@ -32,7 +32,7 @@ class Portfolio:
 
 
         self.loan_capital = {
-            'Apartment': 200,
+            'Residential': 200,
             'Office': 0.15,
             'Retail': 0.20,
             'Industrial': 0.10,
@@ -42,7 +42,7 @@ class Portfolio:
         self.file_path = file_path
 
     def get_loan_capital(self, building_size, property_type):
-        return building_size * self.loan_capital.get(property_type)
+        return building_size * self.loan_capital.get(property_type, 0)
 
     def set_initial_unfunded_equity(self, initial_unfunded_equity):
         self.initial_unfunded_equity = initial_unfunded_equity
@@ -435,7 +435,7 @@ class Portfolio:
 
         preferred_equities = []
         for preferred_equity in self.preferred_equity.values():
-            df = preferred_equity.generate_preferred_equity_schedule_share_df()
+            df = preferred_equity.get_preferred_equity_schedule_share_df_by_date(self.analysis_start_date, self.analysis_end_date)
             df['preferred_equity_id'] = preferred_equity.id
             cols = df.columns[-1:].append(df.columns[:-1])
             preferred_equities.append(df[cols])
@@ -535,6 +535,7 @@ class Portfolio:
             'secured_debt_balance'
         ]
         portfolio_cash_flows = portfolio_cash_flows[columns_order]
+        portfolio_cash_flows = portfolio_cash_flows.loc[ (portfolio_cash_flows.date >= self.analysis_start_date) & (portfolio_cash_flows.date <= self.analysis_end_date)]
         return portfolio_cash_flows
 
     def combine_portfolio_cash_flows_df(self):
@@ -619,7 +620,8 @@ class Portfolio:
 
         # Add unfunded commitments
         portfolio_cash_flows = portfolio_cash_flows.merge(self.get_unfunded_commitments_df(), how='left', on='date')
-
+        portfolio_cash_flows.drop(['Property Name','Property Type','ownership_share'], axis=1, inplace=True)
+        portfolio_cash_flows = portfolio_cash_flows.loc[(portfolio_cash_flows.date >= self.analysis_start_date) & (portfolio_cash_flows.date <= self.analysis_end_date)]
         return portfolio_cash_flows
 
 
