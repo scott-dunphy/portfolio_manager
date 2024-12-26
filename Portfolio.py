@@ -624,6 +624,36 @@ class Portfolio:
         portfolio_cash_flows = portfolio_cash_flows.loc[(portfolio_cash_flows.date >= self.analysis_start_date) & (portfolio_cash_flows.date <= self.analysis_end_date)]
         return portfolio_cash_flows
 
+    def concat_property_loans(self):
+        loan_schedules = []
+        for property in self.properties.values():
+            if hasattr(property,
+                       'loans') and property.loans:  # Check if property has loans attribute and it's not empty
+                for loan in property.loans.values():
+                    loan_schedule = loan.generate_loan_schedule_df()
+                    loan_schedule['loan_id'] = loan.id
+                    loan_schedules.append(loan_schedule)
+
+        if not loan_schedules:
+            # Return empty DataFrame with expected columns
+            return pd.DataFrame(columns=['date', 'beginning_balance', 'loan_draw',
+                                         'loan_paydown', 'interest_payment',
+                                         'scheduled_principal_payment', 'ending_balance'])
+
+        df = pd.concat(loan_schedules)
+        return df
+
+    def value_property_loans(self, as_of_date, discount_rate_spread):
+        loan_schedules = []
+        for property in self.properties.values():
+            if property.loans:  # Check if property has loans attribute and it's not empty
+                for loan in property.loans.values():
+                    loan_value = loan.calculate_loan_market_value(as_of_date, discount_rate_spread)
+                    loan_df = pd.DataFrame([[loan.id, as_of_date, loan_value]], columns=['Loan Id','As of Date','Loan Value'])
+                    loan_schedules.append(loan_df)
+        df = pd.concat(loan_schedules)
+        return df
+
 
 
 
