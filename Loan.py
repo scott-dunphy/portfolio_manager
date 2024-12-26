@@ -377,3 +377,65 @@ class Loan:
         df.reset_index(inplace=True)
         df.rename(columns={'index': 'date'}, inplace=True)
         return df
+
+    def calculate_loan_market_value(self, as_of_date: date, discount_rate: Optional[float] = None):
+        as_of_date = self.get_end_of_month(as_of_date)
+        if discount_rate is None:
+            discount_rate = self.rate
+
+        # Generate the loan schedule
+        schedule_df = self.generate_loan_schedule_df()
+
+        # Ensure schedule_df has required columns
+        required_columns = {'date', 'interest_payment', 'scheduled_principal_payment', 'loan_draw'}
+        if not required_columns.issubset(schedule_df.columns):
+            raise ValueError(
+                f"Loan schedule is missing required columns: {required_columns - set(schedule_df.columns)}")
+
+        # Filter schedule to only include cash flows after the as_of_date
+        schedule_df = schedule_df[schedule_df['date'] > as_of_date]
+
+        # Calculate present value of cash flows
+        market_value = 0.0
+        for _, row in schedule_df.iterrows():
+            cash_flow_date = row['date']
+            interest_payment = row['interest_payment']
+            principal_payment = row['scheduled_principal_payment']
+            loan_draw = row['loan_draw']
+            loan_paydown = row['loan_paydown']
+
+            # Total cash flow for the period: loan draws, interest payments, and principal payments
+            cash_flow = interest_payment + principal_payment + loan_paydown - loan_draw
+
+            # Calculate the number of periods (months) from the as_of_date to the cash flow date
+            months_elapsed = (cash_flow_date.year - as_of_date.year) * 12 + (cash_flow_date.month - as_of_date.month)
+
+            # Discount the cash flow to present value
+            discounted_cash_flow = cash_flow / ((1 + discount_rate / 12) ** months_elapsed)
+
+            # Accumulate the discounted cash flow
+            market_value += discounted_cash_flow
+
+        return market_value
+
+test_loan = Loan(
+    id="test_loan_1",
+    loan_amount=500000,  # $500,000 loan
+    rate=0.05,  # 5% annual interest rate
+    fund_date=date(2024, 1, 1),
+    maturity_date=date(2029, 1, 1),  # 5-year term
+    payment_type="Actual/365",
+    interest_only_periods=0,  # First year is interest-only
+    amortizing_periods=0,  # Remaining 4 years are amortizing
+    commitment=11_000_000
+)
+
+
+# Generate the loan schedule
+schedule_df = test_loan.generate_loan_schedule_df()
+schedule_df.to_excel("/users/scottdunphy/downloads/loan_sched.xlsx")
+
+as_of_date = date(2025, 1, 1)  # Calculate market value as of January 1, 2025
+market_value = test_loan.calculate_loan_market_value(as_of_date=as_of_date, discount_rate=.065)
+
+print(f"Market Value of the Loan as of {as_of_date}: ${market_value:,.2f}")
