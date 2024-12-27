@@ -249,7 +249,8 @@ class Portfolio:
                 amortizing_periods=row['amortizing_periods'],
                 commitment=row['commitment'],
                 prepayment_date=row['prepayment_date'],
-                foreclosure_date=row['foreclosure_date']
+                foreclosure_date=row['foreclosure_date'],
+                market_rate=row['market_rate']
             )
 
             # Add loan to the corresponding property
@@ -276,7 +277,8 @@ class Portfolio:
                 amortizing_periods=row['amortizing_periods'],
                 commitment=row['commitment'],
                 prepayment_date=row['prepayment_date'],
-                foreclosure_date=row['foreclosure_date']
+                foreclosure_date=row['foreclosure_date'],
+                market_rate=row['market_rate']
             )
 
             self.add_loan(loan)
@@ -645,11 +647,15 @@ class Portfolio:
 
     def value_property_loans(self, as_of_date, discount_rate_spread):
         loan_schedules = []
+        as_of_date = self.ensure_date(as_of_date)
         for property in self.properties.values():
             if property.loans:  # Check if property has loans attribute and it's not empty
                 for loan in property.loans.values():
-                    loan_value = loan.calculate_loan_market_value(as_of_date, discount_rate_spread)
-                    loan_df = pd.DataFrame([[loan.id, as_of_date, loan_value]], columns=['Loan Id','As of Date','Loan Value'])
+                    loan_schedule = loan.generate_loan_schedule_df()
+                    current_balance = current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
+                    rate = loan.market_rate + discount_rate_spread
+                    loan_value = loan.calculate_loan_market_value(as_of_date, rate)
+                    loan_df = pd.DataFrame([[loan.id, as_of_date, current_balance, rate, loan_value]], columns=['Loan Id','As of Date','Current Balance','Market Rate','Loan Value'])
                     loan_schedules.append(loan_df)
         df = pd.concat(loan_schedules)
         return df

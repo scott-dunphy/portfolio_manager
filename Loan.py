@@ -20,7 +20,8 @@ class Loan:
                  amortizing_periods: Optional[int] = 360,
                  commitment: Optional[float] = None,
                  prepayment_date: Optional[date] = None,
-                 foreclosure_date: Optional[date] = None):
+                 foreclosure_date: Optional[date] = None,
+                 market_rate: Optional[float] = None):
         # Configure logging
         self.logger = logging.getLogger(__name__)
         handler = logging.StreamHandler()
@@ -49,6 +50,7 @@ class Loan:
         self.interest_only_periods = interest_only_periods
         self.amortizing_periods = amortizing_periods
         self.amortizing_payment = self.calculate_amortizing_payment(loan_amount)
+        self.market_rate = market_rate if market_rate else None
         self.schedule = self.initialize_loan_schedule()
         self.loan_draws = self.initialize_monthly_activity()
         self.loan_paydowns = self.initialize_monthly_activity()
@@ -417,25 +419,3 @@ class Loan:
             market_value += discounted_cash_flow
 
         return market_value
-
-test_loan = Loan(
-    id="test_loan_1",
-    loan_amount=500000,  # $500,000 loan
-    rate=0.05,  # 5% annual interest rate
-    fund_date=date(2024, 1, 1),
-    maturity_date=date(2029, 1, 1),  # 5-year term
-    payment_type="Actual/365",
-    interest_only_periods=0,  # First year is interest-only
-    amortizing_periods=0,  # Remaining 4 years are amortizing
-    commitment=11_000_000
-)
-
-
-# Generate the loan schedule
-schedule_df = test_loan.generate_loan_schedule_df()
-schedule_df.to_excel("/users/scottdunphy/downloads/loan_sched.xlsx")
-
-as_of_date = date(2025, 1, 1)  # Calculate market value as of January 1, 2025
-market_value = test_loan.calculate_loan_market_value(as_of_date=as_of_date, discount_rate=.065)
-
-print(f"Market Value of the Loan as of {as_of_date}: ${market_value:,.2f}")
