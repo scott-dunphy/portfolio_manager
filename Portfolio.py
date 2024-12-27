@@ -624,6 +624,9 @@ class Portfolio:
         portfolio_cash_flows = portfolio_cash_flows.merge(self.get_unfunded_commitments_df(), how='left', on='date')
         portfolio_cash_flows.drop(['Property Name','Property Type','ownership_share'], axis=1, inplace=True)
         portfolio_cash_flows = portfolio_cash_flows.loc[(portfolio_cash_flows.date >= self.analysis_start_date) & (portfolio_cash_flows.date <= self.analysis_end_date)]
+        portfolio_cash_flows['leverage_ratio'] = portfolio_cash_flows.ending_balance / portfolio_cash_flows.market_value
+        portfolio_cash_flows['unencumbered_leverage_ratio'] = portfolio_cash_flows.unsecured_debt_balance / portfolio_cash_flows.unencumbered_market_value
+        portfolio_cash_flows['encumbered_leverage_ratio'] = portfolio_cash_flows.secured_debt_balance / portfolio_cash_flows.encumbered_market_value
         return portfolio_cash_flows
 
     def concat_property_loans(self):
