@@ -27,6 +27,7 @@ class Portfolio:
         self.beginning_cash = 0
         self.capital_calls = {}
         self.redemptions = {}
+        self.drip = {}
         self.distributions = {}
         self.month_list = self.get_month_list(self.analysis_start_date, self.analysis_end_date)
 
@@ -217,6 +218,11 @@ class Portfolio:
             df.loc[(df['cash_flow'] == 'redemption'), 'amount']
         ))
 
+        drip = dict(zip(
+            df.loc[(df['cash_flow'] == 'drip'), 'date'].apply(self.ensure_date),
+            df.loc[(df['cash_flow'] == 'drip'), 'amount']
+        ))
+
         distributions = dict(zip(
             df.loc[(df['cash_flow'] == 'distribution'), 'date'].apply(self.ensure_date),
             df.loc[(df['cash_flow'] == 'distribution'), 'amount']
@@ -224,6 +230,7 @@ class Portfolio:
         self.capital_calls = capital_calls
         self.redemptions = redemptions
         self.distributions = distributions
+        self.drip = drip
 
 
     def load_property_loans(self, df: Optional[pd.DataFrame] = None):
@@ -568,6 +575,7 @@ class Portfolio:
 
         # Map capital calls, redemptions, and distributions
         portfolio_cash_flows['capital_calls'] = portfolio_cash_flows['date'].map(self.capital_calls).fillna(0)
+        portfolio_cash_flows['drip'] = portfolio_cash_flows['date'].map(self.drip).fillna(0)
         portfolio_cash_flows['redemptions'] = portfolio_cash_flows['date'].map(self.redemptions).fillna(0)
         portfolio_cash_flows['distributions'] = portfolio_cash_flows['date'].map(self.distributions).fillna(0)
 
@@ -583,7 +591,8 @@ class Portfolio:
                 portfolio_cash_flows['loan_paydown'] -
                 portfolio_cash_flows['interest_payment'] -
                 portfolio_cash_flows['scheduled_principal_payment'] +
-                portfolio_cash_flows['capital_calls'] -
+                portfolio_cash_flows['capital_calls'] +
+                portfolio_cash_flows['drip'] -
                 portfolio_cash_flows['redemptions'] -
                 portfolio_cash_flows['distributions'] -
                 portfolio_cash_flows['preferred_equity_draw'] +
@@ -624,7 +633,7 @@ class Portfolio:
         portfolio_cash_flows = portfolio_cash_flows.merge(self.get_unfunded_commitments_df(), how='left', on='date')
         portfolio_cash_flows.drop(['Property Name','Property Type','ownership_share'], axis=1, inplace=True)
         portfolio_cash_flows = portfolio_cash_flows.loc[(portfolio_cash_flows.date >= self.analysis_start_date) & (portfolio_cash_flows.date <= self.analysis_end_date)]
-        portfolio_cash_flows['leverage_ratio'] = portfolio_cash_flows.ending_balance / portfolio_cash_flows.market_value
+        portfolio_cash_flows['leverage_ratio'] = portfolio_cash_flows.ending_balance / (portfolio_cash_flows.market_value + portfolio_cash_flows.ending_cash)
         portfolio_cash_flows['unencumbered_leverage_ratio'] = portfolio_cash_flows.unsecured_debt_balance / portfolio_cash_flows.unencumbered_market_value
         portfolio_cash_flows['encumbered_leverage_ratio'] = portfolio_cash_flows.secured_debt_balance / portfolio_cash_flows.encumbered_market_value
         return portfolio_cash_flows

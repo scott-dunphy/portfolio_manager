@@ -184,6 +184,7 @@ class Loan:
 
     def add_loan_paydown(self, paydown: float, paydown_date: date):
         paydown_date = self.get_end_of_month(paydown_date)
+        self.generate_loan_schedule()
         if paydown_date not in self.schedule:
             self.logger.warning(f"Paydown date {paydown_date} is not in the loan schedule.")
             return  # Alternatively, raise an exception
