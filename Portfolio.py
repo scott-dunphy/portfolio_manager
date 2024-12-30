@@ -701,6 +701,8 @@ class Portfolio:
 
     def value_property_loans_at_share_with_valuer(self, as_of_date):
         loan_schedules = []
+        columns = ['Loan Id', 'As of Date', 'Note Rate', 'Market Rate', 'Spread',
+                   'Ownership Share', 'Current Balance', 'Loan Value']
         as_of_date = self.ensure_date(as_of_date)
         for property in self.properties.values():
             if property.loans:  # Check if property has loans attribute and it's not empty
@@ -711,7 +713,7 @@ class Portfolio:
                     current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
                     spread = loan.spread
                     ownership_share = self.properties.get(loan.property_id).get_ownership_share(as_of_date)
-                    loan_df = pd.DataFrame([[loan.id, as_of_date, current_balance*ownership_share, rate, market_rate, spread, market_value*ownership_share,ownership_share]], columns=['Loan Id','As of Date','Current Balance','Note Rate', 'Market Rate', 'Spead', 'Loan Value','Ownership Share'])
+                    loan_df = pd.DataFrame([[loan.id, as_of_date, rate, market_rate, spread, ownership_share, current_balance*ownership_share, market_value*ownership_share]], columns=columns)
                     loan_schedules.append(loan_df)
         for loan in self.loans.values():
             loan_schedule = loan.generate_loan_schedule_df()
@@ -720,12 +722,19 @@ class Portfolio:
             current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
             spread = loan.spread
             loan_df = pd.DataFrame(
-                [[loan.id, as_of_date, current_balance, rate, market_rate, spread, market_value, 1]],
-                columns=['Loan Id', 'As of Date', 'Current Balance', 'Note Rate', 'Market Rate', 'Spead',
-                         'Loan Value','Ownership Share'])
+                [[loan.id, as_of_date, rate, market_rate, spread, 1, current_balance, market_value]],
+                columns=columns)
             loan_schedules.append(loan_df)
         df = pd.concat(loan_schedules)
         return df
+
+    def calculate_change_in_loan_values(self, current_period, prior_period):
+        current_period = self.ensure_date(current_period)
+        prior_period = self.ensure_date(prior_period)
+        current_df = self.value_property_loans_at_share_with_valuer(current_period)
+        prior_df = self.value_property_loans_at_share_with_valuer(prior_period)
+        current_df = current_df.merge(prior_df, on='Loan Id', how='left')
+        return current_df
 
 
 
