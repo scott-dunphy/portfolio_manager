@@ -5,6 +5,7 @@ from calendar import monthrange
 from collections import OrderedDict
 from typing import Optional
 import logging
+from portfolio_manager.LoanValuation import LoanValuation
 
 
 class Loan:
@@ -45,6 +46,7 @@ class Loan:
         self.loan_amount = loan_amount
         self.rate = rate
         self.fund_date = self.get_end_of_month(fund_date)
+        self.fund_date_actual = fund_date
         self.maturity_date = self.get_end_of_month(maturity_date)
         self.payment_type = payment_type
         self.interest_only_periods = interest_only_periods
@@ -420,3 +422,12 @@ class Loan:
             market_value += discounted_cash_flow
 
         return market_value
+
+    def value_loan(self, as_of_date):
+        valuer = LoanValuation(self.fund_date_actual, self.rate, "b73eb39061969ce96b4a673f93d0898e")
+        loan_schedule = self.generate_loan_schedule_df()
+        market_value = valuer.calculate_loan_market_value(as_of_date, loan_schedule)
+        market_rate = valuer.discount_rate
+        self.spread = valuer.spread
+        return market_value, market_rate
+

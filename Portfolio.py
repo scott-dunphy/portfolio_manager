@@ -672,6 +672,61 @@ class Portfolio:
         df = pd.concat(loan_schedules)
         return df
 
+    def value_property_loans_with_valuer(self, as_of_date):
+        loan_schedules = []
+        as_of_date = self.ensure_date(as_of_date)
+        for property in self.properties.values():
+            if property.loans:  # Check if property has loans attribute and it's not empty
+                for loan in property.loans.values():
+                    loan_schedule = loan.generate_loan_schedule_df()
+                    rate = loan.rate
+                    market_value, market_rate = loan.value_loan(as_of_date)
+                    current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
+                    spread = loan.spread
+                    loan_df = pd.DataFrame([[loan.id, as_of_date, current_balance, rate, market_rate, spread, market_value]], columns=['Loan Id','As of Date','Current Balance','Note Rate', 'Market Rate', 'Spead', 'Loan Value'])
+                    loan_schedules.append(loan_df)
+        for loan in self.loans.values():
+            loan_schedule = loan.generate_loan_schedule_df()
+            rate = loan.rate
+            market_value, market_rate = loan.value_loan(as_of_date)
+            current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
+            spread = loan.spread
+            loan_df = pd.DataFrame(
+                [[loan.id, as_of_date, current_balance, rate, market_rate, spread, market_value]],
+                columns=['Loan Id', 'As of Date', 'Current Balance', 'Note Rate', 'Market Rate', 'Spead',
+                         'Loan Value'])
+            loan_schedules.append(loan_df)
+        df = pd.concat(loan_schedules)
+        return df
+
+    def value_property_loans_at_share_with_valuer(self, as_of_date):
+        loan_schedules = []
+        as_of_date = self.ensure_date(as_of_date)
+        for property in self.properties.values():
+            if property.loans:  # Check if property has loans attribute and it's not empty
+                for loan in property.loans.values():
+                    loan_schedule = loan.generate_loan_schedule_df()
+                    rate = loan.rate
+                    market_value, market_rate = loan.value_loan(as_of_date)
+                    current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
+                    spread = loan.spread
+                    ownership_share = self.properties.get(loan.property_id).get_ownership_share(as_of_date)
+                    loan_df = pd.DataFrame([[loan.id, as_of_date, current_balance*ownership_share, rate, market_rate, spread, market_value*ownership_share,ownership_share]], columns=['Loan Id','As of Date','Current Balance','Note Rate', 'Market Rate', 'Spead', 'Loan Value','Ownership Share'])
+                    loan_schedules.append(loan_df)
+        for loan in self.loans.values():
+            loan_schedule = loan.generate_loan_schedule_df()
+            rate = loan.rate
+            market_value, market_rate = loan.value_loan(as_of_date)
+            current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
+            spread = loan.spread
+            loan_df = pd.DataFrame(
+                [[loan.id, as_of_date, current_balance, rate, market_rate, spread, market_value, 1]],
+                columns=['Loan Id', 'As of Date', 'Current Balance', 'Note Rate', 'Market Rate', 'Spead',
+                         'Loan Value','Ownership Share'])
+            loan_schedules.append(loan_df)
+        df = pd.concat(loan_schedules)
+        return df
+
 
 
 
