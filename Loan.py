@@ -423,8 +423,8 @@ class Loan:
 
         return market_value
 
-    def value_loan(self, as_of_date):
-        valuer = LoanValuation(self.fund_date_actual, self.rate, "b73eb39061969ce96b4a673f93d0898e")
+    def value_loan(self, as_of_date, treasury_rates: dict):
+        valuer = LoanValuation(self.fund_date_actual, self.rate, treasury_rates)
         loan_schedule = self.generate_loan_schedule_df()
         max_date = loan_schedule['date'].max()
         if max_date <= as_of_date:

@@ -9,6 +9,8 @@ from collections import OrderedDict
 from typing import Optional
 import pandas as pd
 import logging
+import requests
+
 
 class Portfolio:
     def __init__(self,
@@ -28,8 +30,10 @@ class Portfolio:
         self.capital_calls = {}
         self.redemptions = {}
         self.drip = {}
+        self.treasury_rates = {}
         self.distributions = {}
         self.month_list = self.get_month_list(self.analysis_start_date, self.analysis_end_date)
+        self.fetch_treasury_rates()
 
 
         self.loan_capital = {
@@ -688,7 +692,7 @@ class Portfolio:
                         logging.warning(f"{loan.id}: Loan cash flows end before as of date.")
                         continue
                     rate = loan.rate
-                    market_value, market_rate = loan.value_loan(as_of_date)
+                    market_value, market_rate = loan.value_loan(as_of_date, treasury_rates=self.treasury_rates)
                     current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
                     spread = loan.spread
                     loan_df = pd.DataFrame([[loan.id, as_of_date, current_balance, rate, market_rate, spread, market_value]], columns=['Loan Id','As of Date','Current Balance','Note Rate', 'Market Rate', 'Spead', 'Loan Value'])
@@ -700,7 +704,7 @@ class Portfolio:
                 logging.warning(f"{loan.id}: Loan cash flows end before as of date.")
                 continue
             rate = loan.rate
-            market_value, market_rate = loan.value_loan(as_of_date)
+            market_value, market_rate = loan.value_loan(as_of_date, treasury_rates=self.treasury_rates)
             current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
             spread = loan.spread
             loan_df = pd.DataFrame(
@@ -725,7 +729,7 @@ class Portfolio:
                         logging.warning(f"{loan.id}: Loan cash flows end before as of date.")
                         continue
                     rate = loan.rate
-                    market_value, market_rate = loan.value_loan(as_of_date)
+                    market_value, market_rate = loan.value_loan(as_of_date, treasury_rates=self.treasury_rates)
                     current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
                     spread = loan.spread
                     ownership_share = self.properties.get(loan.property_id).get_ownership_share(as_of_date)
@@ -738,7 +742,7 @@ class Portfolio:
                 logging.warning(f"{loan.id}: Loan cash flows end before as of date.")
                 continue
             rate = loan.rate
-            market_value, market_rate = loan.value_loan(as_of_date)
+            market_value, market_rate = loan.value_loan(as_of_date, treasury_rates=self.treasury_rates)
             current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
             spread = loan.spread
             loan_df = pd.DataFrame(
@@ -756,6 +760,34 @@ class Portfolio:
         current_df = current_df.merge(prior_df, on='Loan Id', how='left')
         return current_df
 
+    from datetime import date
+
+    def fetch_treasury_rates(self, series_id: str = 'DGS10'):
+        base_url = "https://api.stlouisfed.org/fred/series/observations"
+        start_date = date(2013, 1, 1)  # Fixed start date
+        end_date = date.today()  # Use the current date as the end date
+
+        params = {
+            "series_id": series_id,
+            "api_key": "b73eb39061969ce96b4a673f93d0898e",
+            "file_type": "json",
+            "observation_start": start_date.strftime("%Y-%m-%d"),
+            "observation_end": end_date.strftime("%Y-%m-%d"),
+        }
+
+        response = requests.get(base_url, params=params)
+
+        if response.status_code == 200:
+            data = response.json()
+            observations = data.get("observations", [])
+            for obs in observations:
+                obs_date = date.fromisoformat(obs["date"])
+                try:
+                    self.treasury_rates[obs_date] = float(obs["value"]) / 100  # Convert percentage to decimal
+                except ValueError:
+                    continue  # Skip invalid data
+        else:
+            raise ValueError(f"FRED API request failed: {response.status_code}, {response.text}")
 
 
 

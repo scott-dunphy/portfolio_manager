@@ -5,44 +5,10 @@ import requests
 
 
 class LoanValuation:
-    def __init__(self, funding_date: date, note_rate: float, fred_api_key: str):
+    def __init__(self, funding_date: date, note_rate: float, treasury_rates: dict):
         self.funding_date = funding_date  # Funding date of the loan
         self.note_rate = note_rate  # Loan's note rate at origination
-        self.fred_api_key = fred_api_key  # Your FRED API key
-        self.treasury_rates = {}  # Cache for storing fetched Treasury rates
-        self.fetch_treasury_rates(start_date=date(2013, 1, 1), end_date=date(2099, 12, 31))
-
-    def fetch_treasury_rates(self, start_date: date, end_date: date, series_id: str = 'DGS10'):
-        """
-        Fetch Treasury rates for a range of dates from the FRED API and cache them.
-        Parameters:
-        - start_date: The earliest date to fetch rates for.
-        - end_date: The latest date to fetch rates for.
-        - series_id: FRED series ID (default: 'DGS10' for 10-Year Treasury Rate).
-        """
-        base_url = "https://api.stlouisfed.org/fred/series/observations"
-        params = {
-            "series_id": series_id,
-            "api_key": self.fred_api_key,
-            "file_type": "json",
-            "observation_start": start_date.strftime("%Y-%m-%d"),
-            "observation_end": end_date.strftime("%Y-%m-%d"),
-        }
-
-        response = requests.get(base_url, params=params)
-        #print(response.json())
-
-        if response.status_code == 200:
-            data = response.json()
-            observations = data.get("observations", [])
-            for obs in observations:
-                obs_date = date.fromisoformat(obs["date"])
-                try:
-                    self.treasury_rates[obs_date] = float(obs["value"]) / 100  # Convert percentage to decimal
-                except ValueError:
-                    continue  # Skip invalid data
-        else:
-            raise ValueError(f"FRED API request failed: {response.status_code}, {response.text}")
+        self.treasury_rates = treasury_rates  # Cache for storing fetched Treasury rates
 
     def get_treasury_rate(self, target_date: date) -> float:
         """
@@ -112,7 +78,6 @@ class LoanValuation:
         """
         # Step 1: Fetch Treasury rates for efficiency
         funding_treasury_date = self.funding_date - timedelta(days=60)
-        self.fetch_treasury_rates(start_date=funding_treasury_date, end_date=as_of_date)
 
         # Step 2: Calculate spread at origination
         spread_at_origination = self.calculate_spread_at_origination()
@@ -127,17 +92,4 @@ class LoanValuation:
         return self.calculate_present_value(filtered_schedule, discount_rate, as_of_date)
 
 
-# Example Usage
-loan_schedule = pd.DataFrame({
-    'date': [date(2024, 4, 1), date(2024, 5, 1), date(2024, 6, 1)],
-    'interest_payment': [1000, 1000, 1000],
-    'scheduled_principal_payment': [200, 200, 200],
-    'loan_draw': [0, 0, 0],
-    'loan_paydown': [0, 0, 0]
-})
 
-loan = LoanValuation(funding_date=date(2017, 1, 1), note_rate=0.05, fred_api_key="b73eb39061969ce96b4a673f93d0898e")
-
-market_value = loan.calculate_loan_market_value(as_of_date=date(2024, 4, 1), schedule_df=loan_schedule)
-print(f"Loan Market Value: {market_value:.2f}")
-print(f"Loan Spread: {loan.spread:.5f}")
