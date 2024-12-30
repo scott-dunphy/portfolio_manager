@@ -664,7 +664,11 @@ class Portfolio:
             if property.loans:  # Check if property has loans attribute and it's not empty
                 for loan in property.loans.values():
                     loan_schedule = loan.generate_loan_schedule_df()
-                    current_balance = current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
+                    max_date = loan_schedule['date'].max()
+                    if max_date <= as_of_date:
+                        logging.warning(f"{loan.id}: Loan cash flows end before as of date.")
+                        continue
+                    current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
                     rate = loan.market_rate + discount_rate_spread
                     loan_value = loan.calculate_loan_market_value(as_of_date, rate)
                     loan_df = pd.DataFrame([[loan.id, as_of_date, current_balance, rate, loan_value]], columns=['Loan Id','As of Date','Current Balance','Market Rate','Loan Value'])
@@ -679,6 +683,10 @@ class Portfolio:
             if property.loans:  # Check if property has loans attribute and it's not empty
                 for loan in property.loans.values():
                     loan_schedule = loan.generate_loan_schedule_df()
+                    max_date = loan_schedule['date'].max()
+                    if max_date <= as_of_date:
+                        logging.warning(f"{loan.id}: Loan cash flows end before as of date.")
+                        continue
                     rate = loan.rate
                     market_value, market_rate = loan.value_loan(as_of_date)
                     current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
@@ -687,6 +695,10 @@ class Portfolio:
                     loan_schedules.append(loan_df)
         for loan in self.loans.values():
             loan_schedule = loan.generate_loan_schedule_df()
+            max_date = loan_schedule['date'].max()
+            if max_date <= as_of_date:
+                logging.warning(f"{loan.id}: Loan cash flows end before as of date.")
+                continue
             rate = loan.rate
             market_value, market_rate = loan.value_loan(as_of_date)
             current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
@@ -708,6 +720,10 @@ class Portfolio:
             if property.loans:  # Check if property has loans attribute and it's not empty
                 for loan in property.loans.values():
                     loan_schedule = loan.generate_loan_schedule_df()
+                    max_date = loan_schedule['date'].max()
+                    if max_date <= as_of_date:
+                        logging.warning(f"{loan.id}: Loan cash flows end before as of date.")
+                        continue
                     rate = loan.rate
                     market_value, market_rate = loan.value_loan(as_of_date)
                     current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
@@ -717,6 +733,10 @@ class Portfolio:
                     loan_schedules.append(loan_df)
         for loan in self.loans.values():
             loan_schedule = loan.generate_loan_schedule_df()
+            max_date = loan_schedule['date'].max()
+            if max_date <= as_of_date:
+                logging.warning(f"{loan.id}: Loan cash flows end before as of date.")
+                continue
             rate = loan.rate
             market_value, market_rate = loan.value_loan(as_of_date)
             current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
