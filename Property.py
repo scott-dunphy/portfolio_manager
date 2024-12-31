@@ -547,4 +547,16 @@ class Property:
 
         return unencumbered_noi
 
+    def concat_loan_values_df(self, treasury_rates, chatham_style=True):
+        if len(self.loans) == 0:
+            return pd.DataFrame(columns=['loan_id', 'date', 'loan_value','discount_rate'])
+        else:
+            loan_values = []
+            for loan in self.loans.values():
+                for month_ in self.month_list:
+                    loan_value = loan.value_loan(month_, treasury_rates, chatham_style)
+                    loan_values.append((loan.id,month_,loan_value[0], loan_value[1]))
+        df = pd.DataFrame(loan_values, columns=['loan_id', 'date', 'loan_value', 'discount_rate'])
+        return df
+
 

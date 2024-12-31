@@ -763,11 +763,12 @@ class Portfolio:
     from datetime import date
 
     def fetch_treasury_rates(self, series_id: str = 'DGS10'):
-        base_url = "https://api.stlouisfed.org/fred/series/observations"
+        # Fetch rates from FRED API
+        fred_base_url = "https://api.stlouisfed.org/fred/series/observations"
         start_date = date(2013, 1, 1)  # Fixed start date
         end_date = date.today()  # Use the current date as the end date
 
-        params = {
+        fred_params = {
             "series_id": series_id,
             "api_key": "b73eb39061969ce96b4a673f93d0898e",
             "file_type": "json",
@@ -775,11 +776,11 @@ class Portfolio:
             "observation_end": end_date.strftime("%Y-%m-%d"),
         }
 
-        response = requests.get(base_url, params=params)
+        fred_response = requests.get(fred_base_url, params=fred_params)
 
-        if response.status_code == 200:
-            data = response.json()
-            observations = data.get("observations", [])
+        if fred_response.status_code == 200:
+            fred_data = fred_response.json()
+            observations = fred_data.get("observations", [])
             for obs in observations:
                 obs_date = date.fromisoformat(obs["date"])
                 try:
@@ -787,7 +788,30 @@ class Portfolio:
                 except ValueError:
                     continue  # Skip invalid data
         else:
-            raise ValueError(f"FRED API request failed: {response.status_code}, {response.text}")
+            raise ValueError(f"FRED API request failed: {fred_response.status_code}, {fred_response.text}")
+
+        # Fetch rates from Chatham Financial API
+        chatham_url = "https://www.chathamfinancial.com/getrates/278177"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive"
+        }
+        chatham_response = requests.get(chatham_url, headers=headers)
+
+        if chatham_response.status_code == 200:
+            chatham_data = chatham_response.json()
+            for rate_entry in chatham_data.get("Rates", []):
+                try:
+                    raw_date = date.fromisoformat(rate_entry["Date"][:10])  # Extract only the date part
+                    eom_date = self.ensure_date(raw_date)  # Convert to end-of-month using ensure_date
+                    rate_value = rate_entry["Rate"]
+                    self.treasury_rates[eom_date] = rate_value  # Add directly in decimal format
+                except (ValueError, KeyError):
+                    continue  # Skip invalid data
+        else:
+            raise ValueError(f"Chatham API request failed: {chatham_response.status_code}, {chatham_response.text}")
 
 
 

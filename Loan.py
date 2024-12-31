@@ -423,14 +423,14 @@ class Loan:
 
         return market_value
 
-    def value_loan(self, as_of_date, treasury_rates: dict):
+    def value_loan(self, as_of_date, treasury_rates: dict, chatham_style=True):
         valuer = LoanValuation(self.fund_date_actual, self.rate, treasury_rates)
         loan_schedule = self.generate_loan_schedule_df()
         max_date = loan_schedule['date'].max()
         if max_date <= as_of_date:
             logging.warning(f"{self.id}: Loan cash flows end before as of date.")
             return 0,0
-        market_value = valuer.calculate_loan_market_value(as_of_date, loan_schedule)
+        market_value = valuer.calculate_loan_market_value(as_of_date, loan_schedule, chatham_style)
         market_rate = valuer.discount_rate
         self.spread = valuer.spread
         return market_value, market_rate
