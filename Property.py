@@ -70,6 +70,7 @@ class Property:
         self.partner_buyout_percent = partner_buyout_percent
         self.partial_sale_percent = partial_sale_percent
         self.encumbered = encumbered
+        self.treasury_rates = {}
 
         # Ensure initial ownership is set
         if self.acquisition_date and not pd.isna(self.acquisition_date):
@@ -96,6 +97,9 @@ class Property:
         for loan in self.loans.values():
             if min(loan.prepayment_date, loan.maturity_date) > self.disposition_date:
                 logging.warning(f"Loan maturity/prepayment date is after the disposition date. -- Property: {self.name} | Loan: {loan.id}")
+
+    def set_treasury_rates(self, treasury_rates):
+        self.treasury_rates = treasury_rates
 
     def ensure_date(self, input_date):
         """Ensure the input is a datetime.date object and adjust to month-end."""
@@ -135,7 +139,7 @@ class Property:
 
         if self.partner_buyout_date and self.partner_buyout_percent != 0:
             # Apply partner buyout to current ownership the month after the buyout date
-            effective_date = self.get_last_day_of_month(self.partner_buyout_date + relativedelta(months=1))
+            effective_date = self.get_last_day_of_month(self.partner_buyout_date)
             new_ownership = min(current_ownership + self.partner_buyout_percent, 1.0)
             events.append((effective_date, new_ownership))
             current_ownership = new_ownership  # Update for subsequent calculations
@@ -463,7 +467,10 @@ class Property:
             cash_flows['date'] = pd.to_datetime(cash_flows['date'])
             loan_cash_flows = self.combine_loan_schedules_df()
             loan_cash_flows['date'] = pd.to_datetime(loan_cash_flows['date'])
+            #loan_values = self.combine_loan_values_df()
+            #loan_values['date'] = pd.to_datetime(loan_values['date'])
             cash_flows = cash_flows.merge(loan_cash_flows, on='date',how='left')
+            #cash_flows = cash_flows.merge(loan_values[['date','loan_value']], on='date', how='left')
             cash_flows['encumbered'] = cash_flows['encumbered']==True
         cash_flows.fillna(0, inplace=True)
         cash_flows['Property Name'] = self.name
@@ -558,5 +565,17 @@ class Property:
                     loan_values.append((loan.id,month_,loan_value[0], loan_value[1]))
         df = pd.DataFrame(loan_values, columns=['loan_id', 'date', 'loan_value', 'discount_rate'])
         return df
+
+    def combine_loan_values_df(self):
+        if len(self.loans) == 0:
+            return pd.DataFrame(columns=['loan_id', 'date', 'loan_value','discount_rate'])
+        if not self.treasury_rates:
+            raise ValueError("Treasury rates are not available.")
+        df = self.concat_loan_values_df(self.treasury_rates, True)
+        df = df.groupby('date')['loan_value'].sum().reset_index()
+        return df
+
+
+
 
 

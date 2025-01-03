@@ -99,6 +99,7 @@ class Portfolio:
         self.load_capital_flows()
         for property in self.properties.values():
             property.calculate_unfunded_equity()
+            property.set_treasury_rates(self.treasury_rates)
         self.load_preferred_equity()
         self.calculate_unfunded_commitments()
 
@@ -545,7 +546,7 @@ class Portfolio:
             'unsecured_interest_payment',
             'secured_interest_payment',
             'unsecured_debt_balance',
-            'secured_debt_balance'
+            'secured_debt_balance',
         ]
         portfolio_cash_flows = portfolio_cash_flows[columns_order]
         portfolio_cash_flows = portfolio_cash_flows.loc[ (portfolio_cash_flows.date >= self.analysis_start_date) & (portfolio_cash_flows.date <= self.analysis_end_date)]
