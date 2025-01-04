@@ -10,6 +10,7 @@ from typing import Optional
 import pandas as pd
 import logging
 import requests
+import numpy as np
 
 
 class Portfolio:
@@ -34,6 +35,7 @@ class Portfolio:
         self.distributions = {}
         self.month_list = self.get_month_list(self.analysis_start_date, self.analysis_end_date)
         self.fetch_treasury_rates()
+        self.fee = 0
 
 
         self.loan_capital = {
@@ -45,6 +47,9 @@ class Portfolio:
 
     def set_file_path(self, file_path):
         self.file_path = file_path
+
+    def set_fee(self, fee):
+        self.fee = fee
 
     def get_loan_capital(self, building_size, property_type):
         return building_size * self.loan_capital.get(property_type, 0)
@@ -641,6 +646,18 @@ class Portfolio:
         portfolio_cash_flows['leverage_ratio'] = portfolio_cash_flows.ending_balance / (portfolio_cash_flows.market_value + portfolio_cash_flows.ending_cash)
         portfolio_cash_flows['unencumbered_leverage_ratio'] = portfolio_cash_flows.unsecured_debt_balance / portfolio_cash_flows.unencumbered_market_value
         portfolio_cash_flows['encumbered_leverage_ratio'] = portfolio_cash_flows.secured_debt_balance / portfolio_cash_flows.encumbered_market_value
+
+        portfolio_cash_flows['net_asset_value'] = portfolio_cash_flows['market_value'] - portfolio_cash_flows['ending_balance'] + portfolio_cash_flows['ending_cash']
+        portfolio_cash_flows['management_fee'] = np.where(
+            pd.to_datetime(portfolio_cash_flows['date']).dt.month % 3 == 1,  # Condition
+            portfolio_cash_flows['net_asset_value'] * self.fee / 4,  # If True
+            0
+        )
+        portfolio_cash_flows['ending_cash'] = portfolio_cash_flows['ending_cash'] - portfolio_cash_flows['management_fee']
+        portfolio_cash_flows['net_asset_value'] = portfolio_cash_flows['net_asset_value'] - portfolio_cash_flows['management_fee']
+        portfolio_cash_flows['gross_income'] = portfolio_cash_flows['noi'] - portfolio_cash_flows['interest_payment']
+        #portfolio_cash_flows['gain_loss'] = portfolio_cash_flows['market_value'] - portfolio_cash_flows['capex']
+
         return portfolio_cash_flows
 
     def concat_property_loans(self):
