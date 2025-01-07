@@ -184,7 +184,9 @@ class Portfolio:
                     partial_sale_date=self.ensure_date(row['partial_sale_date']),
                     partial_sale_percent=row['partial_sale_percent'],
                     partial_sale_proceeds=row['partial_sale_proceeds'],
-                    encumbered=row['encumbered']
+                    encumbered=row['encumbered'],
+                    cap_rate=row['cap_rate'],
+                    capex_percent_of_noi=row['capex_percent_of_noi']
                 )
             )
         return df

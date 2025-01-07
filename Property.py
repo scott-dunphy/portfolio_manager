@@ -38,6 +38,9 @@ class Property:
                  partner_buyout_cost: Optional[float] = 0,
                  partner_buyout_percent: Optional[float] = 0,
                  encumbered: Optional[bool] = False,
+                 cap_rate: Optional[float] = 0,
+                 capex_percent_of_noi: Optional[float] = 0,
+
                  ):
         self.id = str(id)
         self.name = name
@@ -50,6 +53,8 @@ class Property:
         self.acquisition_date = self.get_last_day_of_month(acquisition_date)
         self.disposition_date = self.get_last_day_of_month(disposition_date)
         self.acquisition_cost = acquisition_cost
+        self.cap_rate = cap_rate
+        self.capex_percent_of_noi = capex_percent_of_noi
         self.disposition_price = disposition_price
         self.loans = loans or {}
         self.analysis_date = self.get_last_day_of_month(analysis_date)
@@ -376,6 +381,10 @@ class Property:
         # Populate cash flows from the stored dictionaries
         df['noi'] = df['date'].map(self.noi).fillna(0)
         df['capex'] = df['date'].map(self.capex).fillna(0)
+
+        # Adjust NOI and Capex when either is 0
+        df.loc[df['noi'] == 0, 'noi'] = df['market_value'] * self.cap_rate / 12
+        df.loc[df['capex'] == 0, 'capex'] = df['market_value'] * self.cap_rate / 12 * self.capex_percent_of_noi
 
         return df
 
