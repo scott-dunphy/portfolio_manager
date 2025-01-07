@@ -267,7 +267,8 @@ class Portfolio:
                 commitment=row['commitment'],
                 prepayment_date=row['prepayment_date'],
                 foreclosure_date=row['foreclosure_date'],
-                market_rate=row['market_rate']
+                market_rate=row['market_rate'],
+                fixed_floating=row['fixed_floating'],
             )
 
             # Add loan to the corresponding property
@@ -295,7 +296,8 @@ class Portfolio:
                 commitment=row['commitment'],
                 prepayment_date=row['prepayment_date'],
                 foreclosure_date=row['foreclosure_date'],
-                market_rate=row['market_rate']
+                market_rate=row['market_rate'],
+                fixed_floating=row['fixed_floating'],
             )
 
             self.add_loan(loan)
@@ -482,6 +484,27 @@ class Portfolio:
         property_cash_flows = property_cash_flows.fillna(0)
 
         return property_cash_flows[cols]
+
+    def concat_property_loan_cash_flows_at_share(self):
+        schedules = []
+        for property in list(self.properties.values()):
+            if len(property.loans) > 0:
+                property_loan_cash_flows = property.concat_loan_schedules_at_share_df()
+                property_loan_cash_flows['Property Name'] = property.name
+                property_loan_cash_flows['Property Type'] = property.property_type
+                schedules.append(property_loan_cash_flows)
+        df = pd.concat(schedules)
+        df = df.fillna(0)
+        return df
+
+    def concat_property_loan_cash_flows_at_share_with_unsecured_loans(self):
+        property_cash_flows = self.concat_property_loan_cash_flows_at_share()
+        unsecured_loan_cash_flows = self.concat_loan_schedules_df()
+        unsecured_loan_cash_flows['date'] = pd.to_datetime(unsecured_loan_cash_flows['date']).dt.date
+        unsecured_loan_cash_flows.rename(columns={'loan_id': 'Property Name'}, inplace=True)
+        unsecured_loan_cash_flows['Property Type'] = 'Fund-Level'
+        portfolio_cash_flows = pd.concat([property_cash_flows, unsecured_loan_cash_flows], axis=0)
+        return portfolio_cash_flows
 
     def concat_property_cash_flows_at_share_with_unsecured_loans(self):
         property_cash_flows = self.concat_property_cash_flows_at_share()

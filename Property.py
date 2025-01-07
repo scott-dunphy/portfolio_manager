@@ -457,6 +457,36 @@ class Property:
             #print(df)
             return df
 
+    def concat_loan_schedules_at_share_df(self):
+        if len(self.loans) == 0:
+            return None
+        else:
+            self.check_loan_dates()
+            loans_ = [loan.generate_loan_schedule_df() for loan in self.loans.values()]
+            df = pd.concat(loans_)
+            df['encumbered'] = df['encumbered'] > 0
+
+            ownership_series = pd.DataFrame(
+                list(self.generate_ownership_series().items()),
+                columns=['date', 'ownership_share']
+            )
+
+            # Ensure dates are `date` objects
+            df['date'] = df['date'].apply(lambda x: x.date() if isinstance(x, datetime) else x)
+            ownership_series['date'] = ownership_series['date'].apply(lambda x: x.date() if isinstance(x, datetime) else x)
+
+            # Merge ownership series with cash flows
+            adjusted_cash_flows = df.merge(ownership_series, on='date', how='left')
+
+            exclude_columns = {'ownership_share'}
+
+            numeric_columns = adjusted_cash_flows.select_dtypes(include='number').columns
+            for col in numeric_columns:
+                if col not in exclude_columns:
+                    adjusted_cash_flows[col] *= adjusted_cash_flows['ownership_share']
+
+            return df
+
     def combine_loan_cash_flows_df(self):
         if len(self.loans) == 0:
             cash_flows = self.get_cash_flows_df()

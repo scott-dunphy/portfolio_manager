@@ -22,7 +22,8 @@ class Loan:
                  commitment: Optional[float] = None,
                  prepayment_date: Optional[date] = None,
                  foreclosure_date: Optional[date] = None,
-                 market_rate: Optional[float] = None):
+                 market_rate: Optional[float] = None,
+                 fixed_floating: Optional[str] = None,):
         # Configure logging
         self.logger = logging.getLogger(__name__)
         handler = logging.StreamHandler()
@@ -50,6 +51,7 @@ class Loan:
         self.maturity_date = self.get_end_of_month(maturity_date)
         self.payment_type = payment_type
         self.interest_only_periods = interest_only_periods
+        self.fixed_floating = fixed_floating
         self.amortizing_periods = amortizing_periods
         self.amortizing_payment = self.calculate_amortizing_payment(loan_amount)
         self.market_rate = market_rate if market_rate else None
@@ -381,6 +383,7 @@ class Loan:
         df = pd.DataFrame.from_dict(self.generate_loan_schedule()).T
         df.reset_index(inplace=True)
         df.rename(columns={'index': 'date'}, inplace=True)
+        df['fixed_floating'] = self.fixed_floating
         return df
 
     def calculate_loan_market_value(self, as_of_date: date, discount_rate: Optional[float] = None):
