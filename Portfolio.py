@@ -36,6 +36,7 @@ class Portfolio:
         self.month_list = self.get_month_list(self.analysis_start_date, self.analysis_end_date)
         self.fetch_treasury_rates()
         self.fee = 0
+        self.beginning_nav = 0
 
 
         self.loan_capital = {
@@ -50,6 +51,9 @@ class Portfolio:
 
     def set_fee(self, fee):
         self.fee = fee
+
+    def set_beginning_nav(self, nav):
+        self.beginning_nav = nav
 
     def get_loan_capital(self, building_size, property_type):
         return building_size * self.loan_capital.get(property_type, 0)
@@ -256,6 +260,7 @@ class Portfolio:
 
         for _, row in df.iterrows():
             # Create Loan instance
+            print(row['id'])
             loan = Loan(
                 id=row['id'],
                 property_id=row['property_id'],
@@ -388,6 +393,7 @@ class Portfolio:
 
     def set_beginning_cash(self, cash):
         self.beginning_cash = cash
+
     def get_loan(self, id):
         if id in self.loans:
             return self.loans.get(id)
@@ -645,7 +651,7 @@ class Portfolio:
         # Calculate ending cash for the first row
         portfolio_cash_flows.iloc[0, portfolio_cash_flows.columns.get_loc('ending_cash')] = (
                 portfolio_cash_flows.iloc[0, portfolio_cash_flows.columns.get_loc('beginning_cash')]
-                + portfolio_cash_flows.iloc[0, portfolio_cash_flows.columns.get_loc('Net Cash Flow')]
+                #+ portfolio_cash_flows.iloc[0, portfolio_cash_flows.columns.get_loc('Net Cash Flow')]
         )
 
         # Iterate for subsequent months
@@ -682,7 +688,12 @@ class Portfolio:
         portfolio_cash_flows['net_asset_value'] = portfolio_cash_flows['net_asset_value'] - portfolio_cash_flows['management_fee']
         portfolio_cash_flows['gross_income'] = portfolio_cash_flows['noi'] - portfolio_cash_flows['interest_payment']
         #portfolio_cash_flows['gain_loss'] = portfolio_cash_flows['market_value'] - portfolio_cash_flows['capex']
-
+        #Set first period values to zero except for NetAssetValue and MarketValue
+        keep_cols = ['net_asset_value', 'ending_cash', 'market_value']
+        zero_cols = portfolio_cash_flows.columns.difference(keep_cols)
+        portfolio_cash_flows.loc[0, zero_cols] = 0
+        portfolio_cash_flows.loc[0, 'net_asset_value'] = self.beginning_nav
+        portfolio_cash_flows = self.calculate_income_and_gains(portfolio_cash_flows)
         return portfolio_cash_flows
 
     def concat_property_loans(self):
@@ -793,6 +804,27 @@ class Portfolio:
                 columns=columns)
             loan_schedules.append(loan_df)
         df = pd.concat(loan_schedules)
+        return df
+
+    def calculate_income_and_gains(self, df):
+        df['market_value_change'] = df['market_value'].diff()
+        df['gain_loss'] = df['market_value_change'] - df['capex'] - df['partner_buyout_cost'] + df['disposition_price'] - df['acquisition_cost'] + df['preferred_equity_repayment'] - df['preferred_equity_draw'] + df['partial_sale_proceeds']
+        df['beginning_nav'] = df['net_asset_value'].shift(3)
+        cols_to_sum = ['capital_calls', 'drip']
+        df['capital_activity'] = df.apply(
+            lambda row: (
+                    df.loc[row.name - 2:row.name, cols_to_sum].sum().sum() -
+                    df.loc[row.name - 2:row.name, 'redemptions'].sum()
+            ), axis=1
+        )
+        df['denominator'] = df['beginning_nav'] + df['capital_activity']
+        df['t3_income'] = df.apply(lambda row: (df.loc[row.name - 2:row.name, 'gross_income'].sum()), axis=1)
+        df['t3_gain_loss'] = df.apply(lambda row: (df.loc[row.name - 2:row.name, 'gain_loss'].sum()), axis=1)
+        df['income_return'] = df['t3_income'] / df['denominator']
+        df['appreciation_return'] = df['t3_gain_loss'] / df['denominator']
+        df['total_return'] = df['income_return'] + df['appreciation_return']
+        drop_cols = ['beginning_nav', 'capital_activity','t3_income', 't3_gain_loss']
+        df.drop(columns=drop_cols,inplace=True)
         return df
 
     def calculate_change_in_loan_values(self, current_period, prior_period):

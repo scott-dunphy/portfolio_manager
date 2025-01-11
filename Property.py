@@ -7,6 +7,7 @@ from portfolio_manager.Loan import Loan
 import pandas as pd
 from itertools import accumulate
 import logging
+import numpy_financial as npf
 
 class Property:
 
@@ -614,6 +615,57 @@ class Property:
         df = df.groupby('date')['loan_value'].sum().reset_index()
         return df
 
+    def calculate_exit_value(self, disposition_date=None):
+        if disposition_date is None:
+            disposition_date = self.disposition_date
+
+        disposition_index = self.month_list.index(disposition_date)
+
+        next_twelve_noi = 0
+        # Loop only within valid indices
+        for i in range(disposition_index + 1, min(disposition_index + 13, len(self.month_list))):
+            noi_month = self.month_list[i]
+            next_twelve_noi += self.get_noi(noi_month)
+
+        return next_twelve_noi / 0.05
+
+    def calculate_property_irr(self, disposition_date=None):
+        if disposition_date is None:
+            disposition_date = self.disposition_date
+        disposition_index = self.month_list.index(disposition_date)
+        irr_months = self.month_list[:disposition_index+1]
+        cash_flows = []
+        cash_flows.append(-self.market_value)
+        for month in irr_months:
+            sale_proceeds = self.calculate_exit_value(disposition_date) if disposition_date == month else 0
+            cash_flow = self.get_noi(month) - self.get_capex(month) + sale_proceeds
+            cash_flows.append(cash_flow)
+        irr = npf.irr(cash_flows)*12
+        return irr, cash_flows
+
+    def find_optimal_disposition_date(self):
+        # Ensure at least one year of cash flows
+        min_months = 12
+
+        # Initialize variables to track the best IRR and corresponding disposition date
+        max_irr = float('-inf')
+        optimal_date = None
+        best_cash_flows = []
+
+        # Iterate through potential disposition dates starting from month 13
+        for i in range(min_months, len(self.month_list)):
+            disposition_date = self.month_list[i]
+
+            # Calculate IRR for this disposition date
+            irr, cash_flows = self.calculate_property_irr(disposition_date)
+
+            # Update the optimal date if the IRR is higher
+            if irr > max_irr:
+                max_irr = irr
+                optimal_date = disposition_date
+                best_cash_flows = cash_flows
+
+        return optimal_date, max_irr, best_cash_flows
 
 
 
