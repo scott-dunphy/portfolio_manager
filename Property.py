@@ -107,7 +107,8 @@ class Property:
             for loan in self.loans:
                 if loan.foreclosure_date:
                     self.foreclosure_date = loan.foreclosure_date
-                    return self.get_market_value_by_date(loan.foreclosure_date)
+                    date_before_foreclosure = self.ensure_date(loan.foreclosure_date + relativedelta(months=-1))
+                    return self.get_market_value_by_date(date_before_foreclosure)
         return 0
 
     def compare_property_and_loan_dates(self):
