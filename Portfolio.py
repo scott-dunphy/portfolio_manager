@@ -34,7 +34,7 @@ class Portfolio:
         self.treasury_rates = {}
         self.distributions = {}
         self.month_list = self.get_month_list(self.analysis_start_date, self.analysis_end_date)
-        self.fetch_treasury_rates()
+        #self.fetch_treasury_rates()
         self.fee = 0
         self.beginning_nav = 0
 

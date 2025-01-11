@@ -90,6 +90,7 @@ class Property:
 
         self.process_ownership_events()
         self.unfunded_equity_commitments = []
+        self.market_values = self.grow_market_value()
 
     def get_last_day_of_month(self, input_date) -> date:
         if pd.isna(input_date):  # Handle NaN, NaT, or blank cells
@@ -101,10 +102,11 @@ class Property:
         return input_date.replace(day=last_day)
 
     def get_market_value_by_date(self, date_):
-        return self.market_value[date_]
+        date_index = self.month_list.index(date_)
+        return self.market_value[date_index]
     def get_foreclosure_market_value(self):
         if len(self.loans) > 0:
-            for loan in self.loans:
+            for loan in self.loans.values():
                 if loan.foreclosure_date:
                     self.foreclosure_date = loan.foreclosure_date
                     date_before_foreclosure = self.ensure_date(loan.foreclosure_date + relativedelta(months=-1))
@@ -391,8 +393,9 @@ class Property:
         df.loc[df.date == self.partner_buyout_date, 'partner_buyout_cost'] = self.partner_buyout_cost
         df.loc[df.date == self.partial_sale_date, 'partial_sale_proceeds'] = self.partial_sale_proceeds
         df['foreclosure_market_value'] = 0
-        if self.foreclosure_date:
-            df.loc[df.date == self.foreclosure_date, 'foreclosure_market_value'] = self.get_foreclosure_market_value()
+        foreclosure_market_value = self.get_foreclosure_market_value()
+        if foreclosure_market_value > 0:
+            df.loc[df.date == self.foreclosure_date, 'foreclosure_market_value'] = foreclosure_market_value
 
         # Populate cash flows from the stored dictionaries
         df['noi'] = df['date'].map(self.noi).fillna(0)
