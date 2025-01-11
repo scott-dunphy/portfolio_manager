@@ -571,6 +571,7 @@ class Portfolio:
             'scheduled_principal_payment',
             'loan_paydown',
             'ending_balance',
+            'foreclosure_market_value',
             'market_value',
             'encumbered',
             'loan_capital',
@@ -808,7 +809,7 @@ class Portfolio:
 
     def calculate_income_and_gains(self, df):
         df['market_value_change'] = df['market_value'].diff()
-        df['gain_loss'] = df['market_value_change'] - df['capex'] - df['partner_buyout_cost'] + df['disposition_price'] - df['acquisition_cost'] + df['preferred_equity_repayment'] - df['preferred_equity_draw'] + df['partial_sale_proceeds']
+        df['gain_loss'] = df['market_value_change'] - df['capex'] - df['partner_buyout_cost'] + df['disposition_price'] - df['acquisition_cost'] + df['preferred_equity_repayment'] - df['preferred_equity_draw'] + df['partial_sale_proceeds'] + df['foreclosure_market_value']
         df['beginning_nav'] = df['net_asset_value'].shift(3)
         cols_to_sum = ['capital_calls', 'drip']
         df['capital_activity'] = df.apply(

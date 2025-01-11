@@ -77,6 +77,7 @@ class Property:
         self.partial_sale_percent = partial_sale_percent
         self.encumbered = encumbered
         self.treasury_rates = {}
+        self.foreclosure_date = None
 
         # Ensure initial ownership is set
         if self.acquisition_date and not pd.isna(self.acquisition_date):
@@ -98,6 +99,16 @@ class Property:
 
         last_day = monthrange(input_date.year, input_date.month)[1]
         return input_date.replace(day=last_day)
+
+    def get_market_value_by_date(self, date_):
+        return self.market_value[date_]
+    def get_foreclosure_market_value(self):
+        if len(self.loans) > 0:
+            for loan in self.loans:
+                if loan.foreclosure_date:
+                    self.foreclosure_date = loan.foreclosure_date
+                    return self.get_market_value_by_date(loan.foreclosure_date)
+        return 0
 
     def compare_property_and_loan_dates(self):
         for loan in self.loans.values():
@@ -378,6 +389,9 @@ class Property:
         df.loc[df.date == self.disposition_date, 'disposition_price'] = self.disposition_price
         df.loc[df.date == self.partner_buyout_date, 'partner_buyout_cost'] = self.partner_buyout_cost
         df.loc[df.date == self.partial_sale_date, 'partial_sale_proceeds'] = self.partial_sale_proceeds
+        df['foreclosure_market_value'] = 0
+        if self.foreclosure_date:
+            df.loc[df.date == self.foreclosure_date, 'foreclosure_market_value'] = self.get_foreclosure_market_value()
 
         # Populate cash flows from the stored dictionaries
         df['noi'] = df['date'].map(self.noi).fillna(0)
