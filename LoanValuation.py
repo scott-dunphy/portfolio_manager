@@ -72,7 +72,7 @@ class LoanValuation:
             market_value += discounted_cash_flow
         return market_value
 
-    def calculate_loan_market_value(self, as_of_date: date, schedule_df: pd.DataFrame, chatham_style=True) -> float:
+    def calculate_loan_market_value(self, as_of_date: date, schedule_df: pd.DataFrame, chatham_style=True, discount_rate: Optional[float] = None) -> float:
         """
         Main function to calculate the market value of the loan.
         """
@@ -80,11 +80,13 @@ class LoanValuation:
         funding_treasury_date = self.funding_date - timedelta(days=60)
         loan_balance = schedule_df.at[0, 'ending_balance']
 
-        # Step 2: Calculate spread at origination
-        spread_at_origination = self.calculate_spread_at_origination()
-
-        # Step 3: Calculate discount rate
-        discount_rate = self.calculate_discount_rate(as_of_date, spread_at_origination)
+        if discount_rate is None:
+            # Step 2: Calculate spread at origination
+            spread_at_origination = self.calculate_spread_at_origination()
+            # Step 3: Calculate discount rate
+            discount_rate = self.calculate_discount_rate(as_of_date, spread_at_origination)
+        else:
+            self.discount_rate = discount_rate
 
         # Step 4: Filter loan schedule
         filtered_schedule = self.filter_schedule_after_as_of_date(schedule_df, as_of_date)

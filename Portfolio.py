@@ -813,7 +813,7 @@ class Portfolio:
         df = pd.concat(loan_schedules)
         return df
 
-    def value_property_loans_at_share_with_valuer(self, as_of_date):
+    def value_property_loans_at_share_with_valuer(self, as_of_date, chatham_style=True):
         loan_schedules = []
         columns = ['Loan Id', 'As of Date', 'Note Rate', 'Market Rate', 'Spread',
                    'Ownership Share', 'Current Balance', 'Loan Value']
@@ -827,9 +827,9 @@ class Portfolio:
                         logging.warning(f"{loan.id}: Loan cash flows end before as of date.")
                         continue
                     rate = loan.rate
-                    market_value, market_rate = loan.value_loan(as_of_date, treasury_rates=self.treasury_rates)
+                    market_value, market_rate = loan.value_loan(as_of_date, treasury_rates=self.treasury_rates, chatham_style=chatham_style)
                     current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
-                    spread = loan.spread
+                    spread = loan.spread or None
                     ownership_share = self.properties.get(loan.property_id).get_ownership_share(as_of_date)
                     loan_df = pd.DataFrame([[loan.id, as_of_date, rate, market_rate, spread, ownership_share, current_balance*ownership_share, market_value*ownership_share]], columns=columns)
                     loan_schedules.append(loan_df)
@@ -840,7 +840,7 @@ class Portfolio:
                 logging.warning(f"{loan.id}: Loan cash flows end before as of date.")
                 continue
             rate = loan.rate
-            market_value, market_rate = loan.value_loan(as_of_date, treasury_rates=self.treasury_rates)
+            market_value, market_rate = loan.value_loan(as_of_date, treasury_rates=self.treasury_rates, chatham_style=chatham_style)
             current_balance = loan_schedule.loc[loan_schedule.date == as_of_date, 'ending_balance'].iloc[0]
             spread = loan.spread
             loan_df = pd.DataFrame(
