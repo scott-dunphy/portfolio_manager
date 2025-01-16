@@ -1,6 +1,7 @@
 from portfolio_manager.Property import Property
 from portfolio_manager.Loan import Loan
 from portfolio_manager.PreferredEquity import PreferredEquity
+from portfolio_manager.CarriedInterest import CarriedInterest, TierParams
 import pandas as pd
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
@@ -37,6 +38,7 @@ class Portfolio:
         #self.fetch_treasury_rates()
         self.fee = 0
         self.beginning_nav = 0
+
 
 
         self.loan_capital = {
@@ -111,11 +113,16 @@ class Portfolio:
             property.set_treasury_rates(self.treasury_rates)
         self.load_preferred_equity()
         self.calculate_unfunded_commitments()
+        self.load_promotes()
+        self.load_promote_cash_flows()
 
 
 
-    def read_import_file(self, sheet_name):
-        df = pd.read_excel(self.file_path, sheet_name=sheet_name, dtype={'id': str})
+    def read_import_file(self, sheet_name, use_cols: Optional[list] = None):
+        if use_cols is not None:
+            df = pd.read_excel(self.file_path, sheet_name=sheet_name, dtype={'id': str, 'property_id': str,'property_id_':str}, usecols=use_cols)
+        else:
+            df = pd.read_excel(self.file_path, sheet_name=sheet_name, dtype={'id': str})
         date_columns = ['acquisition_date', 'disposition_date', 'date', 'fund_date', 'maturity_date', 'prepayment_date','foreclosure_date']  # Replace with your actual date column names
         for col in date_columns:
             if col in df.columns:
@@ -153,6 +160,41 @@ class Portfolio:
             preferred_equity = PreferredEquity(id, loan, ownership_share)
             self.add_preferred_equity(preferred_equity)
 
+    def load_promotes(self, df: Optional[pd.DataFrame] = None):
+        if df is None:
+            df = self.read_import_file('Promotes', use_cols=['property_id', 'tier_number', 'hurdle_rate', 'lp_distribution'])
+            df = df.sort_values(['property_id','tier_number'], ascending=[1,1])
+            df = df.loc[~df.property_id.isna()]
+        for i, row in df.iterrows():
+            property_id = row['property_id']
+            property = self.get_property(property_id)
+            property.add_promote_tier(TierParams(hurdle_rate=row['hurdle_rate'], lp_dist_ratio=row['lp_distribution']))
+    def load_promote_cash_flows(self, df: Optional[pd.DataFrame] = None):
+        if df is None:
+            # Read the data with specific columns
+            df = self.read_import_file('Promotes', use_cols=['property_id_', 'date', 'cash_flow'])
+            df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
+            print(df.columns)
+        # Ensure the DataFrame has the required columns
+        required_columns = {'property_id_', 'date', 'cash_flow'}
+        if not required_columns.issubset(df.columns):
+            raise ValueError(f"The DataFrame must contain the following columns: {required_columns}")
+
+        # Group by property_id to handle cash flows for each property separately
+        grouped = df.groupby('property_id_')
+
+        for property_id, group in grouped:
+            # Retrieve the property object
+            property_obj = self.properties.get(property_id)
+
+            if property_obj is None:
+                raise KeyError(f"Property with ID {property_id} not found in portfolio.")
+
+            # Ensure the cash flows DataFrame for this property is sorted and properly formatted
+            cash_flow_df = group[['date', 'cash_flow']].sort_values(by='date').reset_index(drop=True)
+
+            # Add promote cash flows to the property
+            property_obj.add_promote_cash_flows(cash_flow_df)
 
     def load_properties(self, df: Optional[pd.DataFrame] = None):
         if df is None:
@@ -190,7 +232,8 @@ class Portfolio:
                     partial_sale_proceeds=row['partial_sale_proceeds'],
                     encumbered=row['encumbered'],
                     cap_rate=row['cap_rate'],
-                    capex_percent_of_noi=row['capex_percent_of_noi']
+                    capex_percent_of_noi=row['capex_percent_of_noi'],
+                    promote=row['promote'],
                 )
             )
         return df

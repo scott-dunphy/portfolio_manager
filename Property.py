@@ -4,6 +4,7 @@ from calendar import monthrange
 from collections import OrderedDict
 from typing import Optional
 from portfolio_manager.Loan import Loan
+from portfolio_manager.CarriedInterest import CarriedInterest, TierParams
 import pandas as pd
 from itertools import accumulate
 import logging
@@ -41,6 +42,7 @@ class Property:
                  encumbered: Optional[bool] = False,
                  cap_rate: Optional[float] = 0,
                  capex_percent_of_noi: Optional[float] = 0,
+                 promote = False,
 
                  ):
         self.id = str(id)
@@ -65,6 +67,10 @@ class Property:
         self.ownership = ownership
         self.noi = {}
         self.capex = {}
+        self.promote = promote
+        self.promote_cash_flows = None
+        self.tiers = []
+        self.effective_shares = None
         self.month_list = self.get_month_list(self.analysis_date, self.analysis_length)
         self.ownership_changes = []
         self.construction_end = construction_end
@@ -101,9 +107,53 @@ class Property:
         last_day = monthrange(input_date.year, input_date.month)[1]
         return input_date.replace(day=last_day)
 
+    def add_promote_tier(self, tier: TierParams):
+        self.tiers.append(tier)
+
+    def add_promote_cash_flows(self, cash_flow_df: pd.DataFrame):
+        # Ensure self.promote_cash_flows is initialized
+        if not isinstance(self.promote_cash_flows, pd.DataFrame) or self.promote_cash_flows.empty:
+            self.promote_cash_flows = cash_flow_df
+        else:
+            # Append the new data and reset the index
+            self.promote_cash_flows = pd.concat([self.promote_cash_flows, cash_flow_df], ignore_index=True)
+
+        # Convert all dates to `datetime.date` to ensure consistency
+        if 'date' in self.promote_cash_flows.columns:
+            self.promote_cash_flows['date'] = self.promote_cash_flows['date'].apply(
+                lambda x: x.date() if isinstance(x, pd.Timestamp) else x
+            )
+
+        # Sort by date for consistency
+        self.promote_cash_flows = self.promote_cash_flows.sort_values(by='date').reset_index(drop=True)
+
+    def add_promote_cash_flow(self, date_, cash_flow):
+        """
+        Adds a single promote cash flow row to the promote_cash_flows DataFrame.
+
+        Args:
+            date_ (date): The date of the cash flow.
+            cash_flow (float): The cash flow amount.
+        """
+        # Ensure self.promote_cash_flows is initialized as a DataFrame
+        if not isinstance(self.promote_cash_flows, pd.DataFrame):
+            self.promote_cash_flows = pd.DataFrame(columns=['date', 'cash_flow'])
+
+        # Create a new row
+        new_row = pd.DataFrame({'date': [date_], 'cash_flow': [cash_flow]})
+
+        # Append the new row to the promote_cash_flows DataFrame
+        self.promote_cash_flows = pd.concat([self.promote_cash_flows, new_row], ignore_index=True)
+
+        # Ensure promote_cash_flows remains sorted by date
+        self.promote_cash_flows['date'] = pd.to_datetime(self.promote_cash_flows['date'])
+        self.promote_cash_flows = self.promote_cash_flows.sort_values(by='date').reset_index(drop=True)
+
+
     def get_market_value_by_date(self, date_):
         date_index = self.month_list.index(date_)
-        return self.market_value[date_index]
+        return self.market_values[date_index]
+
     def get_foreclosure_market_value(self):
         if len(self.loans) > 0:
             for loan in self.loans.values():
@@ -248,9 +298,9 @@ class Property:
         unfunded_equity = max(unfunded_equity, 0)
 
         if unfunded_equity >= deficit:
-            return 0, unfunded_equity - deficit  # Fully covered by equity
+            return deficit, 0, unfunded_equity - deficit  # Fully covered by equity
         else:
-            return deficit - unfunded_equity, 0  # Remaining deficit after equity exhaustion
+            return unfunded_equity, deficit - unfunded_equity, 0  # Remaining deficit after equity exhaustion
 
     def cover_deficit_with_loans(self, deficit, draw_date, loans):
         """Cover remaining deficit with available loan draws."""
@@ -286,16 +336,17 @@ class Property:
             deficit = self.calculate_period_deficit(period_ncf)
 
             # Step 2: Cover deficit with equity
-            deficit, unfunded_equity = self.cover_deficit_with_equity(deficit, unfunded_equity)
-
+            equity_contribution, deficit, unfunded_equity = self.cover_deficit_with_equity(deficit, unfunded_equity)
+            self.add_promote_cash_flow(draw_date, -equity_contribution)
             # Step 3: Cover remaining deficit with loans
             if deficit > 0:
+
                 deficit = self.cover_deficit_with_loans(deficit, draw_date, self.loans)
 
             # Step 4: Log error if deficit remains (optional)
             if deficit > 0:
                 logging.error(f"{self.name}: Remaining deficit on {draw_date}: {deficit:.2f}")
-
+                self.add_promote_cash_flow(draw_date, -deficit)
             # Step 5: Track current unfunded equity balance
             unfunded_equity_commitments.append(unfunded_equity)
 
@@ -537,6 +588,42 @@ class Property:
             cash_flows['encumbered'] = True
         return cash_flows
 
+    def calculate_effective_share(self, date_, nav):
+        df = self.promote_cash_flows.copy()
+        df['cash_flow'] = df['cash_flow'].astype(float)
+        if date_ in df['date'].values:
+            df.loc[df['date'] == date_, 'cash_flow'] += float(nav)
+        else:
+            new_row = pd.DataFrame({'date': [date_], 'cash_flow': [nav]})
+            df = pd.concat([df, new_row], ignore_index=True)
+        df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
+        df = df.sort_values(by='date').reset_index(drop=True)
+        df = df.loc[df.cash_flow != 0]
+        df = df.loc[df.date <= date_]
+        if date_ == date(2026,12,31):
+            print(df)
+
+        dates_ = df['date'].tolist()
+        cfs = df['cash_flow'].tolist()
+
+        return CarriedInterest(dates_, cfs, self.tiers).get_lp_effective_share()
+
+    def calculate_effective_shares(self):
+        df = self.combine_loan_cash_flows_df()
+        df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
+        df['nav'] = df['market_value'] - df.get('ending_balance', 0)
+        df['effective_share'] = df.apply(
+            lambda row: self.calculate_effective_share(row['date'], row['nav']), axis=1
+        )
+        # Convert to a dictionary with date as the key and effective_share as the value
+        self.effective_shares = df.set_index('date')['effective_share'].to_dict()
+        return self.effective_shares
+
+    def get_effective_share_by_month(self, date_):
+        if not self.effective_shares:
+            self.calculate_effective_shares()
+        return self.effective_shares.get(date_)
+
     def adjust_cash_flows_by_ownership_df(self):
         """Adjust all numeric cash flow columns by the ownership share."""
         cash_flows = self.combine_loan_cash_flows_df()
@@ -597,6 +684,9 @@ class Property:
                     adjusted_cash_flows.loc[
                         adjusted_cash_flows['date'] == event_date, 'market_value'
                     ] = corrected_market_value
+        if self.promote:
+            adjusted_cash_flows = self.calculate_income_and_gain_loss(adjusted_cash_flows)
+        adjusted_cash_flows.loc[adjusted_cash_flows['ownership_share'] == 1, 'effective_share'] = 1.0
 
         return adjusted_cash_flows
 
@@ -632,6 +722,25 @@ class Property:
         df = self.concat_loan_values_df(self.treasury_rates, True)
         df = df.groupby('date')['loan_value'].sum().reset_index()
         return df
+
+    def calculate_income_and_gain_loss(self, df):
+        df['market_value_change'] = df['market_value'].diff()
+        df['gain_loss'] = df['market_value_change'] - df['capex'] - df['partner_buyout_cost'] + df[
+            'disposition_price'] - df['acquisition_cost'] + df['partial_sale_proceeds'] + df['foreclosure_market_value']
+        df['gross_income'] = df['noi'] - df.get('interest_payment', 0)
+        df['gain_loss_dilution'] = df.apply(lambda x: self.get_effective_share_adjustment(x['gain_loss'], x['ownership_share'], self.get_effective_share_by_month(x['date'])), axis=1)
+        df['gross_income_loss_dilution'] = df.apply(
+            lambda x: self.get_effective_share_adjustment(x['gross_income'], x['ownership_share'],
+                                                          self.get_effective_share_by_month(x['date'])), axis=1)
+        df['effective_share'] = df['date'].apply(lambda x: self.get_effective_share_by_month(x))
+        return df
+
+    def get_effective_share_adjustment(self, stated_value, stated_share, effective_share):
+
+        if stated_share < 1:
+            effective_value = stated_value / stated_share * effective_share
+            return effective_value - stated_value
+        return 0
 
     def calculate_exit_value(self, disposition_date=None):
         if disposition_date is None:
@@ -684,7 +793,3 @@ class Property:
                 best_cash_flows = cash_flows
 
         return optimal_date, max_irr, best_cash_flows
-
-
-
-
