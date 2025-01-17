@@ -627,6 +627,8 @@ class Portfolio:
             'secured_interest_payment',
             'unsecured_debt_balance',
             'secured_debt_balance',
+            'gain_loss_dilution',
+
         ]
         portfolio_cash_flows = portfolio_cash_flows[columns_order]
         portfolio_cash_flows = portfolio_cash_flows.loc[ (portfolio_cash_flows.date >= self.analysis_start_date) & (portfolio_cash_flows.date <= self.analysis_end_date)]

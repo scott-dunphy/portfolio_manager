@@ -186,6 +186,7 @@ class CarriedInterest:
         return self.lp_effective_share
 
     def calculate(self) -> Dict[str, float]:
+        print(self.deal_cash_flows, self.deal_dates)
         if not self.deal_dates or not self.deal_cash_flows:
             self.lp_effective_share = self.tiers[0].lp_dist_ratio if self.tiers else 0.0
             return {
@@ -195,17 +196,24 @@ class CarriedInterest:
         self._tier_distribution()
         return self._compute_irr_multiple()
 
+
 def sum_cash_flows_by_date(dates: List[date], cash_flows: List[float]) -> Tuple[List[date], List[float]]:
     """
     Sum cash flows that occur on the same date.
+    Filters out any entries where the date is None or the cash flow is NaN.
     Returns new lists of dates and summed cash flows where each date is unique.
     """
     summed = {}
     for d, cf in zip(dates, cash_flows):
+        # Skip entries where the date is None or the cash flow is NaN
+        if d is None or cf is None or math.isnan(cf):
+            continue
+
         if d in summed:
             summed[d] += cf
         else:
             summed[d] = cf
+
     # Sort the dates to maintain chronological order
     sorted_dates = sorted(summed.keys())
     summed_cash_flows = [summed[d] for d in sorted_dates]
