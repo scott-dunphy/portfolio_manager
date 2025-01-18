@@ -628,6 +628,9 @@ class Portfolio:
             'unsecured_debt_balance',
             'secured_debt_balance',
             'gain_loss_dilution',
+            'gross_income_loss_dilution',
+            'effective_share',
+            'nav_dilution',
 
         ]
         portfolio_cash_flows = portfolio_cash_flows[columns_order]

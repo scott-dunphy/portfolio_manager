@@ -174,6 +174,7 @@ class Loan:
             prior_month = self.get_prior_month(draw_date)
             allowable_draw = self.unfunded.get(prior_month)
             #print(f"{self.id}: {allowable_draw}")
+            allowable_draw = allowable_draw if allowable_draw is not None else 0
             draw = min(draw, allowable_draw)
             if draw > 0:
                 self.loan_draws[draw_date] = draw

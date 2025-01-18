@@ -129,24 +129,39 @@ class Property:
 
     def add_promote_cash_flow(self, date_, cash_flow):
         """
-        Adds a single promote cash flow row to the promote_cash_flows DataFrame.
+        Adds or updates a single promote cash flow row to the promote_cash_flows DataFrame.
+
+        If a cash flow already exists for the given date, the cash_flow amount will be added to the existing value.
+        Otherwise, a new row will be appended.
 
         Args:
-            date_ (date): The date of the cash flow.
+            date_ (date or str): The date of the cash flow.
             cash_flow (float): The cash flow amount.
         """
         # Ensure self.promote_cash_flows is initialized as a DataFrame
         if not isinstance(self.promote_cash_flows, pd.DataFrame):
             self.promote_cash_flows = pd.DataFrame(columns=['date', 'cash_flow'])
 
-        # Create a new row
-        new_row = pd.DataFrame({'date': [date_], 'cash_flow': [cash_flow]})
+        # Normalize the date using ensure_date method
+        # This should return a Python date object
+        date_ = self.ensure_date(date_)
 
-        # Append the new row to the promote_cash_flows DataFrame
-        self.promote_cash_flows = pd.concat([self.promote_cash_flows, new_row], ignore_index=True)
+        # Convert any existing 'date' column entries to date objects if they aren't already
+        if not self.promote_cash_flows.empty:
+            self.promote_cash_flows['date'] = pd.to_datetime(self.promote_cash_flows['date']).dt.date
 
-        # Ensure promote_cash_flows remains sorted by date
-        self.promote_cash_flows['date'] = pd.to_datetime(self.promote_cash_flows['date'])
+        # Check if the date already exists in the DataFrame
+        if date_ in self.promote_cash_flows['date'].values:
+            # If yes, update the existing cash_flow value by adding the new amount
+            mask = self.promote_cash_flows['date'] == date_
+            self.promote_cash_flows.loc[mask, 'cash_flow'] += cash_flow
+        else:
+            # Otherwise, create a new row and append it
+            new_row = pd.DataFrame({'date': [date_], 'cash_flow': [cash_flow]})
+            self.promote_cash_flows = pd.concat([self.promote_cash_flows, new_row], ignore_index=True)
+
+        # Ensure 'date' column stays as date type and DataFrame is sorted by date
+        self.promote_cash_flows['date'] = pd.to_datetime(self.promote_cash_flows['date']).dt.date
         self.promote_cash_flows = self.promote_cash_flows.sort_values(by='date').reset_index(drop=True)
 
 
@@ -590,21 +605,23 @@ class Property:
 
     def calculate_effective_share(self, date_, nav):
         df = self.promote_cash_flows.copy()
+        df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
+        date_ = self.ensure_date(date_)
         df['cash_flow'] = df['cash_flow'].astype(float)
         if date_ in df['date'].values:
             df.loc[df['date'] == date_, 'cash_flow'] += float(nav)
         else:
             new_row = pd.DataFrame({'date': [date_], 'cash_flow': [nav]})
             df = pd.concat([df, new_row], ignore_index=True)
-        df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
+
+        df = df.groupby('date').sum().reset_index()
         df = df.sort_values(by='date').reset_index(drop=True)
         df = df.loc[df.cash_flow != 0]
         df = df.loc[df.date <= date_]
-        if date_ == date(2026,12,31):
-            print(df)
-
         dates_ = df['date'].tolist()
         cfs = df['cash_flow'].tolist()
+        print(cfs, dates_)
+
 
         return CarriedInterest(dates_, cfs, self.tiers).get_lp_effective_share()
 
@@ -612,11 +629,16 @@ class Property:
         df = self.combine_loan_cash_flows_df()
         df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
         df['nav'] = df['market_value'] - df.get('ending_balance', 0)
-        df['effective_share'] = df.apply(
+
+        # Aggregate NAV by date to avoid duplicate processing
+        aggregated = df.groupby('date')['nav'].sum().reset_index()
+
+        # Calculate effective share for each unique date
+        aggregated['effective_share'] = aggregated.apply(
             lambda row: self.calculate_effective_share(row['date'], row['nav']), axis=1
         )
-        # Convert to a dictionary with date as the key and effective_share as the value
-        self.effective_shares = df.set_index('date')['effective_share'].to_dict()
+
+        self.effective_shares = aggregated.set_index('date')['effective_share'].to_dict()
         return self.effective_shares
 
     def get_effective_share_by_month(self, date_):
@@ -729,11 +751,27 @@ class Property:
             'disposition_price'] - df['acquisition_cost'] + df['partial_sale_proceeds'] + df['foreclosure_market_value']
         df['gross_income'] = df['noi'] - df.get('interest_payment', 0)
         df['gain_loss_dilution'] = df.apply(lambda x: self.get_effective_share_adjustment(x['gain_loss'], x['ownership_share'], self.get_effective_share_by_month(x['date'])), axis=1)
+        df['nav'] = df['market_value'] - df['ending_balance']
         df['gross_income_loss_dilution'] = df.apply(
             lambda x: self.get_effective_share_adjustment(x['gross_income'], x['ownership_share'],
                                                           self.get_effective_share_by_month(x['date'])), axis=1)
+        df['nav_dilution'] = df.apply(lambda x: self.get_effective_share_adjustment(x['nav'], x['ownership_share'],
+                                                          self.get_effective_share_by_month(x['date'])), axis=1)
         df['effective_share'] = df['date'].apply(lambda x: self.get_effective_share_by_month(x))
         return df
+
+    def capitalize_forward_noi(self, date_, cap_rate):
+        noi_sums = []
+        start_date = date_
+        for _ in range(12):
+            next_month = self.ensure_date(start_date + relativedelta(months=1))
+            monthly_sum = sum(
+                value for date, value in self.noi.items()
+                if start_date <= date < next_month
+            )
+            noi_sums.append(monthly_sum)
+            start_date = next_month
+        return sum(noi_sums) / cap_rate
 
     def get_effective_share_adjustment(self, stated_value, stated_share, effective_share):
 

@@ -146,7 +146,10 @@ class CarriedInterest:
         lp_multiple = lp_distr / lp_contrib if lp_contrib != 0 else float('inf')
         gp_multiple = gp_distr / gp_contrib if gp_contrib != 0 else float('inf')
 
-        if deal_distr > 0:
+        if len(self.deal_cash_flows) == 1:
+            lp_effective_share = self.tiers[0].lp_dist_ratio
+            gp_effective_share = 1 - lp_effective_share
+        elif deal_distr > 0:
             lp_effective_share = lp_distr / deal_distr
             gp_effective_share = gp_distr / deal_distr
         else:
@@ -186,7 +189,6 @@ class CarriedInterest:
         return self.lp_effective_share
 
     def calculate(self) -> Dict[str, float]:
-        print(self.deal_cash_flows, self.deal_dates)
         if not self.deal_dates or not self.deal_cash_flows:
             self.lp_effective_share = self.tiers[0].lp_dist_ratio if self.tiers else 0.0
             return {
@@ -219,50 +221,3 @@ def sum_cash_flows_by_date(dates: List[date], cash_flows: List[float]) -> Tuple[
     summed_cash_flows = [summed[d] for d in sorted_dates]
     return sorted_dates, summed_cash_flows
 
-# Example Usage
-if __name__ == "__main__":
-    deal_dates = [
-        date(2023, 6, 30),
-        date(2023, 7, 25),
-        date(2023, 10, 29),
-        date(2024, 3, 15),
-        date(2025, 3, 14),
-        date(2025, 9, 10),
-        date(2026, 3, 3),
-        date(2026, 7, 7),
-        date(2027, 4, 7),
-        date(2027, 5, 16),
-        date(2028, 1, 30),
-        date(2028, 7, 22)
-    ]
-
-    deal_cash_flows = [
-        -50000000.0,
-        -30000000.0,
-        -1000000.0,
-        0.0,
-        -10000000.0,
-        5000000.0,
-        5000000.0,
-        5000000.0,
-        5000000.0,
-        5000000.0,
-        5000000.0,
-        200000000.0
-    ]
-
-    tiers = [
-        TierParams(hurdle_rate=0.08, lp_dist_ratio=0.80),
-        TierParams(hurdle_rate=0.10, lp_dist_ratio=0.70),
-        TierParams(hurdle_rate=0.12, lp_dist_ratio=0.60),
-        TierParams(lp_dist_ratio=0.5)
-
-    ]
-
-    calc = CarriedInterest(deal_dates, deal_cash_flows, tiers)
-    results = calc.calculate()
-
-
-    print("Carried Interest Results:\n" + "-" * 30)
-    for key, val in results.items():
-        print(f"{key}: {val:.4f}" if isinstance(val, float) else f"{key}: {val}")
