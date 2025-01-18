@@ -702,12 +702,14 @@ class Portfolio:
         else:
             start_index = 0
 
-        # Set beginning cash for the first period in our analysis range
+        # Set beginning and ending cash for the first period based on set_beginning_cash
+        initial_cash = self.beginning_cash if self.beginning_cash is not None else 0.0
+        portfolio_cash_flows.at[start_index, 'beginning_cash'] = initial_cash
         portfolio_cash_flows.at[
-            start_index, 'beginning_cash'] = self.beginning_cash if self.beginning_cash is not None else 0.0
+            start_index, 'ending_cash'] = initial_cash  # Ensure first month's ending cash equals beginning cash
 
         # Process each period, deducting management fee as needed
-        for i in range(start_index, len(portfolio_cash_flows)):
+        for i in range(start_index+1, len(portfolio_cash_flows)):
             # For subsequent periods, carry over ending cash from previous period
             if i > start_index:
                 portfolio_cash_flows.at[i, 'beginning_cash'] = portfolio_cash_flows.at[i - 1, 'ending_cash']
