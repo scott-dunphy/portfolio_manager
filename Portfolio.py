@@ -692,59 +692,103 @@ class Portfolio:
                 portfolio_cash_flows['preferred_equity_repayment']
         )
 
-        # Initialize beginning cash and ensure it's for the analysis_start_date month
+        # Initialize beginning and ending cash columns
         portfolio_cash_flows['beginning_cash'] = 0.0
         portfolio_cash_flows['ending_cash'] = 0.0
+
+        # Determine the starting index for analysis_start_date
         if self.analysis_start_date in portfolio_cash_flows['date'].values:
-            portfolio_cash_flows.loc[
-                portfolio_cash_flows['date'] == self.analysis_start_date, 'beginning_cash'
-            ] = self.beginning_cash if self.beginning_cash is not None else 0.0
+            start_index = portfolio_cash_flows.index[portfolio_cash_flows['date'] == self.analysis_start_date][0]
+        else:
+            start_index = 0
 
-        # Calculate ending cash for the first row
-        portfolio_cash_flows.iloc[0, portfolio_cash_flows.columns.get_loc('ending_cash')] = (
-                portfolio_cash_flows.iloc[0, portfolio_cash_flows.columns.get_loc('beginning_cash')]
-                #+ portfolio_cash_flows.iloc[0, portfolio_cash_flows.columns.get_loc('Net Cash Flow')]
-        )
+        # Set beginning cash for the first period in our analysis range
+        portfolio_cash_flows.at[
+            start_index, 'beginning_cash'] = self.beginning_cash if self.beginning_cash is not None else 0.0
 
-        # Iterate for subsequent months
-        for i in range(1, len(portfolio_cash_flows)):
-            portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('beginning_cash')] = \
-                portfolio_cash_flows.iloc[i - 1, portfolio_cash_flows.columns.get_loc('ending_cash')]
+        # Process each period, deducting management fee as needed
+        for i in range(start_index, len(portfolio_cash_flows)):
+            # For subsequent periods, carry over ending cash from previous period
+            if i > start_index:
+                portfolio_cash_flows.at[i, 'beginning_cash'] = portfolio_cash_flows.at[i - 1, 'ending_cash']
 
-            portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('ending_cash')] = (
-                    portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('beginning_cash')]
-                    + portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('Net Cash Flow')]
+            # Calculate provisional ending cash for this period before fee deduction
+            provisional_ending_cash = portfolio_cash_flows.at[i, 'beginning_cash'] + portfolio_cash_flows.at[
+                i, 'Net Cash Flow']
+
+            # Temporarily assign provisional ending cash
+            portfolio_cash_flows.at[i, 'ending_cash'] = provisional_ending_cash
+
+            # Calculate net asset value before fee deduction for this period
+            nav_before_fee = (
+                    portfolio_cash_flows.at[i, 'market_value'] -
+                    portfolio_cash_flows.at[i, 'ending_balance'] +
+                    provisional_ending_cash
+            )
+
+            # If it's the start of a quarter, calculate and deduct management fee
+            current_date = pd.to_datetime(portfolio_cash_flows.at[i, 'date'])
+            if current_date.month % 3 == 1:  # Assuming quarter start months (Jan, Apr, Jul, Oct)
+                management_fee = nav_before_fee * self.fee / 4
+            else:
+                management_fee = 0
+
+            # Deduct the fee from the provisional ending cash
+            adjusted_ending_cash = provisional_ending_cash - management_fee
+
+            # Update the DataFrame with the fee and adjusted cash
+            portfolio_cash_flows.at[i, 'management_fee'] = management_fee
+            portfolio_cash_flows.at[i, 'ending_cash'] = adjusted_ending_cash
+
+            # Recalculate net asset value after fee deduction for record-keeping
+            portfolio_cash_flows.at[i, 'net_asset_value'] = (
+                    portfolio_cash_flows.at[i, 'market_value'] -
+                    portfolio_cash_flows.at[i, 'ending_balance'] +
+                    adjusted_ending_cash
             )
 
             # Check for negative cash and log a warning
-            ending_cash = portfolio_cash_flows.iloc[i, portfolio_cash_flows.columns.get_loc('ending_cash')]
-            if ending_cash < 0:
+            if adjusted_ending_cash < 0:
                 logging.warning(
-                    f"Warning: Cash is negative in month {i + 1}: ${ending_cash:,.0f}. Consider a revolver draw or capital call.")
+                    f"Warning: Cash is negative in period {i + 1}: ${adjusted_ending_cash:,.0f}. Consider a revolver draw or capital call."
+                )
+
+        # After loop operations for remaining calculations:
 
         # Add unfunded commitments
-        portfolio_cash_flows = portfolio_cash_flows.merge(self.get_unfunded_commitments_df(), how='left', on='date')
-        portfolio_cash_flows.drop(['Property Name','Property Type','ownership_share'], axis=1, inplace=True)
-        portfolio_cash_flows = portfolio_cash_flows.loc[(portfolio_cash_flows.date >= self.analysis_start_date) & (portfolio_cash_flows.date <= self.analysis_end_date)]
-        portfolio_cash_flows['leverage_ratio'] = portfolio_cash_flows.ending_balance / (portfolio_cash_flows.market_value + portfolio_cash_flows.ending_cash)
-        portfolio_cash_flows['unencumbered_leverage_ratio'] = portfolio_cash_flows.unsecured_debt_balance / portfolio_cash_flows.unencumbered_market_value
-        portfolio_cash_flows['encumbered_leverage_ratio'] = portfolio_cash_flows.secured_debt_balance / portfolio_cash_flows.encumbered_market_value
-
-        portfolio_cash_flows['net_asset_value'] = portfolio_cash_flows['market_value'] - portfolio_cash_flows['ending_balance'] + portfolio_cash_flows['ending_cash']
-        portfolio_cash_flows['management_fee'] = np.where(
-            pd.to_datetime(portfolio_cash_flows['date']).dt.month % 3 == 1,  # Condition
-            portfolio_cash_flows['net_asset_value'] * self.fee / 4,  # If True
-            0
+        portfolio_cash_flows = portfolio_cash_flows.merge(
+            self.get_unfunded_commitments_df(), how='left', on='date'
         )
-        portfolio_cash_flows['ending_cash'] = portfolio_cash_flows['ending_cash'] - portfolio_cash_flows['management_fee']
-        portfolio_cash_flows['net_asset_value'] = portfolio_cash_flows['net_asset_value'] - portfolio_cash_flows['management_fee']
+        portfolio_cash_flows.drop(['Property Name', 'Property Type', 'ownership_share'], axis=1, inplace=True)
+        portfolio_cash_flows = portfolio_cash_flows.loc[
+            (portfolio_cash_flows.date >= self.analysis_start_date) &
+            (portfolio_cash_flows.date <= self.analysis_end_date)
+            ]
+
+        portfolio_cash_flows['leverage_ratio'] = (
+                portfolio_cash_flows.ending_balance /
+                (portfolio_cash_flows.market_value + portfolio_cash_flows.ending_cash)
+        )
+        portfolio_cash_flows['unencumbered_leverage_ratio'] = (
+                portfolio_cash_flows.unsecured_debt_balance /
+                portfolio_cash_flows.unencumbered_market_value
+        )
+        portfolio_cash_flows['encumbered_leverage_ratio'] = (
+                portfolio_cash_flows.secured_debt_balance /
+                portfolio_cash_flows.encumbered_market_value
+        )
+
         portfolio_cash_flows['gross_income'] = portfolio_cash_flows['noi'] - portfolio_cash_flows['interest_payment']
-        #portfolio_cash_flows['gain_loss'] = portfolio_cash_flows['market_value'] - portfolio_cash_flows['capex']
-        #Set first period values to zero except for NetAssetValue and MarketValue
+        # portfolio_cash_flows['gain_loss'] = portfolio_cash_flows['market_value'] - portfolio_cash_flows['capex']
+
+        # Set first period values to zero except for NetAssetValue and MarketValue
         keep_cols = ['net_asset_value', 'ending_cash', 'market_value']
         zero_cols = portfolio_cash_flows.columns.difference(keep_cols)
-        portfolio_cash_flows.loc[0, zero_cols] = 0
-        portfolio_cash_flows.loc[0, 'net_asset_value'] = self.beginning_nav
+        # Ensure the very first row (index 0 of analysis period) has the correct initial NAV
+        first_row_index = portfolio_cash_flows.index[0]
+        portfolio_cash_flows.loc[first_row_index, zero_cols] = 0
+        portfolio_cash_flows.at[first_row_index, 'net_asset_value'] = self.beginning_nav
+
         portfolio_cash_flows = self.calculate_income_and_gains(portfolio_cash_flows)
         return portfolio_cash_flows
 
