@@ -174,7 +174,7 @@ class Portfolio:
             # Read the data with specific columns
             df = self.read_import_file('Promotes', use_cols=['property_id_', 'date', 'cash_flow'])
             df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
-            print(df.columns)
+            #print(df.columns)
         # Ensure the DataFrame has the required columns
         required_columns = {'property_id_', 'date', 'cash_flow'}
         if not required_columns.issubset(df.columns):
@@ -234,6 +234,7 @@ class Portfolio:
                     cap_rate=row['cap_rate'],
                     capex_percent_of_noi=row['capex_percent_of_noi'],
                     promote=row['promote'],
+                    upper_tier_share = row['upper_tier_share'] if not pd.isna(row['upper_tier_share']) else None
                 )
             )
         return df
@@ -303,7 +304,7 @@ class Portfolio:
 
         for _, row in df.iterrows():
             # Create Loan instance
-            print(row['id'])
+            #print(row['id'])
             loan = Loan(
                 id=row['id'],
                 property_id=row['property_id'],
@@ -627,6 +628,8 @@ class Portfolio:
             'secured_interest_payment',
             'unsecured_debt_balance',
             'secured_debt_balance',
+            'gross_income',
+            'gain_loss',
             'gain_loss_dilution',
             'gross_income_loss_dilution',
             'effective_share',

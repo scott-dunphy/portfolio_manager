@@ -31,6 +31,7 @@ class Property:
                  loans: Optional[dict],
                  market_value_growth: Optional[float]=.03,
                  ownership: Optional[float]=1,
+                 upper_tier_share: Optional[float] = None,
                  construction_end: Optional[date] = None,
                  equity_commitment: Optional[float] = None,
                  partial_sale_date: Optional[date] = None,
@@ -43,6 +44,7 @@ class Property:
                  cap_rate: Optional[float] = 0,
                  capex_percent_of_noi: Optional[float] = 0,
                  promote = False,
+
 
                  ):
         self.id = str(id)
@@ -65,6 +67,7 @@ class Property:
         self.market_value = market_value
         self.market_value_growth = market_value_growth
         self.ownership = ownership
+        self.upper_tier_share = upper_tier_share
         self.noi = {}
         self.capex = {}
         self.promote = promote
@@ -601,6 +604,10 @@ class Property:
         cash_flows['Property Type'] = self.property_type
         if self.encumbered == True:
             cash_flows['encumbered'] = True
+        cash_flows['market_value_change'] = cash_flows['market_value'].diff()
+        cash_flows['gain_loss'] = cash_flows['market_value_change'] - cash_flows['capex'] - cash_flows['partner_buyout_cost'] + cash_flows[
+            'disposition_price'] - cash_flows['acquisition_cost'] + cash_flows['partial_sale_proceeds'] + cash_flows['foreclosure_market_value']
+        cash_flows['gross_income'] = cash_flows['noi'] - cash_flows.get('interest_payment', 0)
         return cash_flows
 
     def calculate_effective_share(self, date_, nav):
@@ -620,10 +627,13 @@ class Property:
         df = df.loc[df.date <= date_]
         dates_ = df['date'].tolist()
         cfs = df['cash_flow'].tolist()
-        print(cfs, dates_)
 
+        if self.upper_tier_share:
+            lp_effective_share = CarriedInterest(dates_, cfs, self.tiers).get_lp_effective_share() * self.upper_tier_share
+        else:
+            lp_effective_share = CarriedInterest(dates_, cfs, self.tiers).get_lp_effective_share()
 
-        return CarriedInterest(dates_, cfs, self.tiers).get_lp_effective_share()
+        return lp_effective_share
 
     def calculate_effective_shares(self):
         df = self.combine_loan_cash_flows_df()
@@ -746,10 +756,6 @@ class Property:
         return df
 
     def calculate_income_and_gain_loss(self, df):
-        df['market_value_change'] = df['market_value'].diff()
-        df['gain_loss'] = df['market_value_change'] - df['capex'] - df['partner_buyout_cost'] + df[
-            'disposition_price'] - df['acquisition_cost'] + df['partial_sale_proceeds'] + df['foreclosure_market_value']
-        df['gross_income'] = df['noi'] - df.get('interest_payment', 0)
         df['gain_loss_dilution'] = df.apply(lambda x: self.get_effective_share_adjustment(x['gain_loss'], x['ownership_share'], self.get_effective_share_by_month(x['date'])), axis=1)
         df['nav'] = df['market_value'] - df['ending_balance']
         df['gross_income_loss_dilution'] = df.apply(
