@@ -38,6 +38,7 @@ class Portfolio:
         #self.fetch_treasury_rates()
         self.fee = 0
         self.beginning_nav = 0
+        self.valuation_method = "cap_rate"
 
 
 
@@ -62,6 +63,10 @@ class Portfolio:
 
     def set_initial_unfunded_equity(self, initial_unfunded_equity):
         self.initial_unfunded_equity = initial_unfunded_equity
+
+    def set_valuation_method(self, valuation_method):
+        for prop in self.properties.values():
+            prop.set_valuation_method(valuation_method=valuation_method)
 
     def get_month_list(self, start_date: date, end_date: date) -> list:
         if start_date > end_date:
@@ -232,6 +237,7 @@ class Portfolio:
                     partial_sale_proceeds=row['partial_sale_proceeds'],
                     encumbered=row['encumbered'],
                     cap_rate=row['cap_rate'],
+                    exit_cap_rate=row['exit_cap_rate'],
                     capex_percent_of_noi=row['capex_percent_of_noi'],
                     promote=row['promote'],
                     upper_tier_share = row['upper_tier_share'] if not pd.isna(row['upper_tier_share']) else None

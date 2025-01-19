@@ -41,12 +41,14 @@ class Property:
                  partner_buyout_cost: Optional[float] = 0,
                  partner_buyout_percent: Optional[float] = 0,
                  encumbered: Optional[bool] = False,
-                 cap_rate: Optional[float] = 0,
+                 cap_rate: Optional[float] = None,
                  capex_percent_of_noi: Optional[float] = 0,
                  promote = False,
+                 exit_cap_rate: Optional[float] = None,
 
 
                  ):
+
         self.id = str(id)
         self.name = name
         self.property_type = property_type
@@ -59,10 +61,11 @@ class Property:
         self.disposition_date = self.get_last_day_of_month(disposition_date)
         self.acquisition_cost = acquisition_cost
         self.cap_rate = cap_rate
+        self.exit_cap_rate = exit_cap_rate
         self.capex_percent_of_noi = capex_percent_of_noi
         self.disposition_price = disposition_price
         self.loans = loans or {}
-        self.analysis_date = self.get_last_day_of_month(analysis_date)
+        self.analysis_date = self.ensure_date(self.get_last_day_of_month(analysis_date))
         self.analysis_length = int(analysis_length)
         self.market_value = market_value
         self.market_value_growth = market_value_growth
@@ -76,7 +79,7 @@ class Property:
         self.effective_shares = None
         self.month_list = self.get_month_list(self.analysis_date, self.analysis_length)
         self.ownership_changes = []
-        self.construction_end = construction_end
+        self.construction_end = self.ensure_date(construction_end)
         self.equity_commitment = equity_commitment
         self.partial_sale_date = partial_sale_date
         self.partner_buyout_date = partner_buyout_date
@@ -87,6 +90,7 @@ class Property:
         self.encumbered = encumbered
         self.treasury_rates = {}
         self.foreclosure_date = None
+        self.valuation_method = "cap_rate"
 
         # Ensure initial ownership is set
         if self.acquisition_date and not pd.isna(self.acquisition_date):
@@ -370,29 +374,46 @@ class Property:
 
         return unfunded_equity_commitments
 
+    def set_valuation_method(self, valuation_method="cap_rate"):
+        self.valuation_method = valuation_method
+        return
+
+
     def grow_market_value(self):
         growth_rate = (1 + self.market_value_growth) ** (1 / 12)
         market_value = self.market_value
         market_values = []
 
+        # Check if construction has ended or is not defined
+        construction_finished = (self.construction_end is None) or (self.construction_end < self.analysis_date)
+
+        # Calculate total months for linear interpolation
+        total_months = 120
+
         # Iterate through months to adjust market value
         for idx, month in enumerate(self.month_list):
-            if month < self.disposition_date:
-                if idx == 0:
-                    # Set the initial market value for the first month
-                    current_value = market_value
-                else:
-                    # Apply CAPEX if within the construction period
-                    capex = self.capex.get(month, 0) if self.construction_end and month <= self.construction_end else 0
-
-                    # Update market value with growth and capex
-                    current_value = current_value * growth_rate + capex
-            elif month == self.disposition_date:
-                # Set market value to 0 on the disposition date
-                current_value = 0
+            # If construction is finished and user opts for cap rate method
+            if self.valuation_method == "cap_rate" and construction_finished:
+                months_elapsed = idx
+                fraction = min(months_elapsed / total_months, 1)
+                interpolated_cap_rate = self.cap_rate + fraction * (self.exit_cap_rate - self.cap_rate)
+                current_value = self.capitalize_forward_noi(month,
+                                                            interpolated_cap_rate) if interpolated_cap_rate else 0
             else:
-                # Ensure market value remains 0 after disposition
-                current_value = 0
+                # This branch is used either when:
+                # a) We are within the construction period, or
+                # b) The user requested not to use the cap rate method.
+                if month < self.disposition_date:
+                    if idx == 0:
+                        current_value = market_value
+                    else:
+                        capex = self.capex.get(month,
+                                               0) if self.construction_end and month <= self.construction_end else 0
+                        current_value = current_value * growth_rate + capex
+                elif month == self.disposition_date:
+                    current_value = 0
+                else:
+                    current_value = 0
 
             market_values.append(current_value)
 
