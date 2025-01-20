@@ -38,7 +38,7 @@ class Portfolio:
         #self.fetch_treasury_rates()
         self.fee = 0
         self.beginning_nav = 0
-        self.valuation_method = "cap_rate"
+        self.valuation_method = "growth"
 
 
 

@@ -90,7 +90,7 @@ class Property:
         self.encumbered = encumbered
         self.treasury_rates = {}
         self.foreclosure_date = None
-        self.valuation_method = "cap_rate"
+        self.valuation_method = "growth"
 
         # Ensure initial ownership is set
         if self.acquisition_date and not pd.isna(self.acquisition_date):
@@ -182,6 +182,7 @@ class Property:
                 if loan.foreclosure_date:
                     self.foreclosure_date = loan.foreclosure_date
                     date_before_foreclosure = self.ensure_date(loan.foreclosure_date + relativedelta(months=-1))
+                    self.market_values = self.grow_market_value()
                     return self.get_market_value_by_date(date_before_foreclosure)
         return 0
 
@@ -374,49 +375,102 @@ class Property:
 
         return unfunded_equity_commitments
 
-    def set_valuation_method(self, valuation_method="cap_rate"):
+    def set_valuation_method(self, valuation_method="growth"):
         self.valuation_method = valuation_method
         return
 
     def grow_market_value(self):
-        growth_rate = (1 + self.market_value_growth) ** (1 / 12)
-        market_value = self.market_value
-        market_values = []
+        """
+        Calculate property market values over time considering valuation method and construction status.
+        
+        Returns:
+            list: Monthly market values for the analysis period
+            
+        Notes:
+            - Uses cap rate interpolation if construction is finished and valuation_method is "cap_rate"
+            - Otherwise uses growth rate method with CAPEX adjustments
+            - Market value becomes 0 after disposition date
+        """
+        try:
+            # Validate inputs
+            self._validate_market_value_inputs()
+            
+            # Initialize variables
+            market_values = []
+            current_value = self.market_value
+            growth_rate = (1 + self.market_value_growth) ** (1 / 12)
+            construction_finished = (self.construction_end is None) or (self.construction_end < self.analysis_date)
+            total_months = 120  # For cap rate interpolation
+            
+            # Calculate market values for each month
+            for idx, month in enumerate(self.month_list):
+                try:
+                    current_value = self._calculate_monthly_value(
+                        idx=idx,
+                        month=month,
+                        current_value=current_value,
+                        growth_rate=growth_rate,
+                        construction_finished=construction_finished,
+                        total_months=total_months
+                    )
+                    market_values.append(current_value)
+                    
+                except Exception as e:
+                    logging.error(f"Error calculating market value for month {month}: {str(e)}")
+                    # Fallback to previous value or 0
+                    market_values.append(market_values[-1] if market_values else 0)
+                    
+            return market_values
+            
+        except Exception as e:
+            logging.error(f"Error in grow_market_value: {str(e)}")
+            raise
 
-        # Check if construction has ended or is not defined
-        construction_finished = (self.construction_end is None) or (self.construction_end < self.analysis_date)
+    def _validate_market_value_inputs(self):
+        """Validate required inputs for market value calculations."""
+        if not isinstance(self.market_value, (int, float)) or self.market_value < 0:
+            raise ValueError(f"Invalid market value: {self.market_value}")
+        
+        if not isinstance(self.market_value_growth, (int, float)):
+            raise ValueError(f"Invalid growth rate: {self.market_value_growth}")
+        
+        if self.valuation_method == "cap_rate":
+            if None in (self.cap_rate, self.exit_cap_rate):
+                raise ValueError("Cap rate and exit cap rate required for cap rate valuation")
+            if self.cap_rate <= 0 or self.exit_cap_rate <= 0:
+                raise ValueError("Cap rates must be positive")
 
-        # Calculate total months for linear interpolation
-        total_months = 120
+    def _calculate_monthly_value(self, idx, month, current_value, growth_rate, 
+                               construction_finished, total_months):
+        """Calculate market value for a single month."""
+        if idx == 0:
+            return current_value
+        
+        if month >= self.disposition_date:
+            return 0
+        
+        if self.valuation_method == "cap_rate" and construction_finished:
+            return self._calculate_cap_rate_value(idx, month, total_months)
+        
+        # Growth rate method with CAPEX
+        capex = self._get_monthly_capex(month, construction_finished)
+        return current_value * growth_rate + capex
 
-        # Iterate through months to adjust market value
-        for idx, month in enumerate(self.month_list):
-            if idx == 0:
-                # Initialize current value for the first month
-                current_value = market_value
-            else:
-                # If construction is finished and using cap rate method
-                if self.valuation_method == "cap_rate" and construction_finished:
-                    months_elapsed = idx
-                    fraction = min(months_elapsed / total_months, 1)
-                    interpolated_cap_rate = self.cap_rate + fraction * (self.exit_cap_rate - self.cap_rate)
-                    current_value = self.capitalize_forward_noi(
-                        month, interpolated_cap_rate) if interpolated_cap_rate else 0
-                else:
-                    # Use growth rate method with CAPEX
-                    if month < self.disposition_date:
-                        capex = self.capex.get(month,
-                                               0) if self.construction_end and month <= self.construction_end else 0
-                        current_value = current_value * growth_rate + capex
-                    elif month == self.disposition_date:
-                        current_value = 0
-                    else:
-                        current_value = 0
+    def _calculate_cap_rate_value(self, idx, month, total_months):
+        """Calculate value using cap rate method."""
+        fraction = min(idx / total_months, 1)
+        interpolated_cap_rate = self.cap_rate + fraction * (self.exit_cap_rate - self.cap_rate)
+        
+        if interpolated_cap_rate <= 0:
+            raise ValueError(f"Invalid interpolated cap rate: {interpolated_cap_rate}")
+        
+        return self.capitalize_forward_noi(month, interpolated_cap_rate)
 
-            # Append the current market value to the list
-            market_values.append(current_value)
-
-        return market_values
+    def _get_monthly_capex(self, month, construction_finished):
+        """Get CAPEX amount for the month if applicable."""
+        if construction_finished or not self.construction_end:
+            return 0
+        return self.capex.get(month, 0) if month <= self.construction_end else 0
 
     def get_disposition_date(self):
         return self.disposition_date
@@ -739,7 +793,12 @@ class Property:
         if self.promote:
             adjusted_cash_flows = self.calculate_income_and_gain_loss(adjusted_cash_flows)
         adjusted_cash_flows.loc[adjusted_cash_flows['ownership_share'] == 1, 'effective_share'] = 1.0
-
+        adjusted_cash_flows['market_value_change'] = adjusted_cash_flows['market_value'].diff()
+        adjusted_cash_flows['gain_loss'] = adjusted_cash_flows['market_value_change'] - adjusted_cash_flows['capex'] - adjusted_cash_flows[
+            'partner_buyout_cost'] + adjusted_cash_flows[
+                                      'disposition_price'] - adjusted_cash_flows['acquisition_cost'] + adjusted_cash_flows[
+                                      'partial_sale_proceeds'] + adjusted_cash_flows['foreclosure_market_value']
+        adjusted_cash_flows['gross_income'] = adjusted_cash_flows['noi'] - adjusted_cash_flows.get('interest_payment', 0)
         return adjusted_cash_flows
 
     def get_unencumbered_noi(self, beg_date: date, end_date: date):
