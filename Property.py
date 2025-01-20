@@ -378,7 +378,6 @@ class Property:
         self.valuation_method = valuation_method
         return
 
-
     def grow_market_value(self):
         growth_rate = (1 + self.market_value_growth) ** (1 / 12)
         market_value = self.market_value
@@ -392,29 +391,29 @@ class Property:
 
         # Iterate through months to adjust market value
         for idx, month in enumerate(self.month_list):
-            # If construction is finished and user opts for cap rate method
-            if self.valuation_method == "cap_rate" and construction_finished:
-                months_elapsed = idx
-                fraction = min(months_elapsed / total_months, 1)
-                interpolated_cap_rate = self.cap_rate + fraction * (self.exit_cap_rate - self.cap_rate)
-                current_value = self.capitalize_forward_noi(month,
-                                                            interpolated_cap_rate) if interpolated_cap_rate else 0
+            if idx == 0:
+                # Initialize current value for the first month
+                current_value = market_value
             else:
-                # This branch is used either when:
-                # a) We are within the construction period, or
-                # b) The user requested not to use the cap rate method.
-                if month < self.disposition_date:
-                    if idx == 0:
-                        current_value = market_value
-                    else:
+                # If construction is finished and using cap rate method
+                if self.valuation_method == "cap_rate" and construction_finished:
+                    months_elapsed = idx
+                    fraction = min(months_elapsed / total_months, 1)
+                    interpolated_cap_rate = self.cap_rate + fraction * (self.exit_cap_rate - self.cap_rate)
+                    current_value = self.capitalize_forward_noi(
+                        month, interpolated_cap_rate) if interpolated_cap_rate else 0
+                else:
+                    # Use growth rate method with CAPEX
+                    if month < self.disposition_date:
                         capex = self.capex.get(month,
                                                0) if self.construction_end and month <= self.construction_end else 0
                         current_value = current_value * growth_rate + capex
-                elif month == self.disposition_date:
-                    current_value = 0
-                else:
-                    current_value = 0
+                    elif month == self.disposition_date:
+                        current_value = 0
+                    else:
+                        current_value = 0
 
+            # Append the current market value to the list
             market_values.append(current_value)
 
         return market_values
@@ -802,7 +801,9 @@ class Property:
 
     def get_effective_share_adjustment(self, stated_value, stated_share, effective_share):
 
-        if stated_share < 1:
+        if stated_share == 0:
+            return 0
+        elif stated_share < 1:
             effective_value = stated_value / stated_share * effective_share
             return effective_value - stated_value
         return 0
