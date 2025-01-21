@@ -382,10 +382,10 @@ class Property:
     def grow_market_value(self):
         """
         Calculate property market values over time considering valuation method and construction status.
-        
+
         Returns:
             list: Monthly market values for the analysis period
-            
+
         Notes:
             - Uses cap rate interpolation if construction is finished and valuation_method is "cap_rate"
             - Otherwise uses growth rate method with CAPEX adjustments
@@ -394,34 +394,37 @@ class Property:
         try:
             # Validate inputs
             self._validate_market_value_inputs()
-            
+
             # Initialize variables
             market_values = []
             current_value = self.market_value
             growth_rate = (1 + self.market_value_growth) ** (1 / 12)
             construction_finished = (self.construction_end is None) or (self.construction_end < self.analysis_date)
             total_months = 120  # For cap rate interpolation
-            
+
             # Calculate market values for each month
             for idx, month in enumerate(self.month_list):
                 try:
-                    current_value = self._calculate_monthly_value(
-                        idx=idx,
-                        month=month,
-                        current_value=current_value,
-                        growth_rate=growth_rate,
-                        construction_finished=construction_finished,
-                        total_months=total_months
-                    )
+                    if month == self.acquisition_date:
+                        current_value = self.acquisition_cost
+                    else:
+                        current_value = self._calculate_monthly_value(
+                            idx=idx,
+                            month=month,
+                            current_value=current_value,
+                            growth_rate=growth_rate,
+                            construction_finished=construction_finished,
+                            total_months=total_months
+                        )
                     market_values.append(current_value)
-                    
+
                 except Exception as e:
                     logging.error(f"Error calculating market value for month {month}: {str(e)}")
                     # Fallback to previous value or 0
                     market_values.append(market_values[-1] if market_values else 0)
-                    
+
             return market_values
-            
+
         except Exception as e:
             logging.error(f"Error in grow_market_value: {str(e)}")
             raise
