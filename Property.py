@@ -682,6 +682,7 @@ class Property:
         cash_flows['gain_loss'] = cash_flows['market_value_change'] - cash_flows['capex'] - cash_flows['partner_buyout_cost'] + cash_flows[
             'disposition_price'] - cash_flows['acquisition_cost'] + cash_flows['partial_sale_proceeds'] + cash_flows['foreclosure_market_value']
         cash_flows['gross_income'] = cash_flows['noi'] - cash_flows.get('interest_payment', 0)
+        cash_flows.loc[cash_flows['date'] == self.acquisition_date, 'gain_loss'] = 0
         return cash_flows
 
     def calculate_effective_share(self, date_, nav):
@@ -799,6 +800,7 @@ class Property:
                                       'disposition_price'] - adjusted_cash_flows['acquisition_cost'] + adjusted_cash_flows[
                                       'partial_sale_proceeds'] + adjusted_cash_flows['foreclosure_market_value']
         adjusted_cash_flows['gross_income'] = adjusted_cash_flows['noi'] - adjusted_cash_flows.get('interest_payment', 0)
+        adjusted_cash_flows.loc[cash_flows['date'] == self.acquisition_date, 'gain_loss'] = 0
         return adjusted_cash_flows
 
     def get_unencumbered_noi(self, beg_date: date, end_date: date):
