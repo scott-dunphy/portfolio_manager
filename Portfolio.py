@@ -42,8 +42,10 @@ class Portfolio:
 
 
 
+        # Loan capital multipliers are expressed as decimal percentages
+        # (e.g., 0.15 represents 15%)
         self.loan_capital = {
-            'Residential': 200,
+            'Residential': 0.20,
             'Office': 0.15,
             'Retail': 0.20,
             'Industrial': 0.10,
