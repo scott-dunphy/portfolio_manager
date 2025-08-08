@@ -5,7 +5,7 @@ from calendar import monthrange
 from collections import OrderedDict
 from typing import Optional
 import logging
-from portfolio_manager.LoanValuation import LoanValuation
+from .LoanValuation import LoanValuation
 
 
 class Loan:
