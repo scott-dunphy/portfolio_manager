@@ -1,7 +1,7 @@
-from portfolio_manager.Property import Property
-from portfolio_manager.Loan import Loan
-from portfolio_manager.PreferredEquity import PreferredEquity
-from portfolio_manager.CarriedInterest import CarriedInterest, TierParams
+from .Property import Property
+from .Loan import Loan
+from .PreferredEquity import PreferredEquity
+from .CarriedInterest import CarriedInterest, TierParams
 import pandas as pd
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta

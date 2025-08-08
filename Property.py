@@ -3,8 +3,8 @@ from dateutil.relativedelta import relativedelta
 from calendar import monthrange
 from collections import OrderedDict
 from typing import Optional
-from portfolio_manager.Loan import Loan
-from portfolio_manager.CarriedInterest import CarriedInterest, TierParams
+from .Loan import Loan
+from .CarriedInterest import CarriedInterest, TierParams
 import pandas as pd
 from itertools import accumulate
 import logging

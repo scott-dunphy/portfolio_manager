@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Optional, List, Tuple
 from calendar import monthrange
 from decimal import Decimal
-from portfolio_manager.Loan import Loan  # Adjust import path as needed
+from .Loan import Loan
 
 
 class PreferredEquity:
