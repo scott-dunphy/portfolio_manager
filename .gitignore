@@ -75,3 +75,14 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+instance/
+backend/instance/
+
+# Upload directories
+uploads/
+backend/uploads/
