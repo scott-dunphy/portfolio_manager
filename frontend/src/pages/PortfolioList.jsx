@@ -14,6 +14,8 @@ function PortfolioList() {
   const [openDialog, setOpenDialog] = useState(false)
   const [editingPortfolio, setEditingPortfolio] = useState(null)
   const [error, setError] = useState('')
+  const [dialogError, setDialogError] = useState('')
+  const [loading, setLoading] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
     analysis_start_date: '',
@@ -71,9 +73,34 @@ function PortfolioList() {
   const handleCloseDialog = () => {
     setOpenDialog(false)
     setEditingPortfolio(null)
+    setDialogError('')
   }
 
   const handleSubmit = async () => {
+    // Clear previous errors
+    setDialogError('')
+
+    // Validate required fields
+    if (!formData.name || !formData.name.trim()) {
+      setDialogError('Portfolio name is required')
+      return
+    }
+    if (!formData.analysis_start_date) {
+      setDialogError('Start date is required')
+      return
+    }
+    if (!formData.analysis_end_date) {
+      setDialogError('End date is required')
+      return
+    }
+
+    // Validate date order
+    if (new Date(formData.analysis_start_date) > new Date(formData.analysis_end_date)) {
+      setDialogError('Start date must be before end date')
+      return
+    }
+
+    setLoading(true)
     try {
       if (editingPortfolio) {
         await portfolioAPI.update(editingPortfolio.id, formData)
@@ -83,8 +110,11 @@ function PortfolioList() {
       fetchPortfolios()
       handleCloseDialog()
     } catch (error) {
-      setError('Failed to save portfolio')
+      const errorMessage = error.response?.data?.error || 'Failed to save portfolio'
+      setDialogError(errorMessage)
       console.error('Error saving portfolio:', error)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -169,6 +199,7 @@ function PortfolioList() {
       <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
         <DialogTitle>{editingPortfolio ? 'Edit Portfolio' : 'New Portfolio'}</DialogTitle>
         <DialogContent>
+          {dialogError && <Alert severity="error" sx={{ mb: 2 }}>{dialogError}</Alert>}
           <TextField
             fullWidth
             margin="normal"
@@ -177,6 +208,7 @@ function PortfolioList() {
             value={formData.name}
             onChange={handleChange}
             required
+            disabled={loading}
           />
           <TextField
             fullWidth
@@ -188,6 +220,7 @@ function PortfolioList() {
             onChange={handleChange}
             InputLabelProps={{ shrink: true }}
             required
+            disabled={loading}
           />
           <TextField
             fullWidth
@@ -199,6 +232,7 @@ function PortfolioList() {
             onChange={handleChange}
             InputLabelProps={{ shrink: true }}
             required
+            disabled={loading}
           />
           <TextField
             fullWidth
@@ -208,6 +242,7 @@ function PortfolioList() {
             type="number"
             value={formData.initial_unfunded_equity}
             onChange={handleChange}
+            disabled={loading}
           />
           <TextField
             fullWidth
@@ -217,6 +252,7 @@ function PortfolioList() {
             type="number"
             value={formData.beginning_cash}
             onChange={handleChange}
+            disabled={loading}
           />
           <TextField
             fullWidth
@@ -226,6 +262,7 @@ function PortfolioList() {
             type="number"
             value={formData.fee}
             onChange={handleChange}
+            disabled={loading}
           />
           <TextField
             fullWidth
@@ -235,12 +272,13 @@ function PortfolioList() {
             type="number"
             value={formData.beginning_nav}
             onChange={handleChange}
+            disabled={loading}
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseDialog}>Cancel</Button>
-          <Button onClick={handleSubmit} variant="contained">
-            {editingPortfolio ? 'Update' : 'Create'}
+          <Button onClick={handleCloseDialog} disabled={loading}>Cancel</Button>
+          <Button onClick={handleSubmit} variant="contained" disabled={loading}>
+            {loading ? 'Saving...' : editingPortfolio ? 'Update' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>
