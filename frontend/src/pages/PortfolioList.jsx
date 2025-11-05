@@ -40,6 +40,7 @@ function PortfolioList() {
   }
 
   const handleOpenDialog = (portfolio = null) => {
+    setError('') // Clear any previous errors
     if (portfolio) {
       setEditingPortfolio(portfolio)
       setFormData({
@@ -74,7 +75,14 @@ function PortfolioList() {
   }
 
   const handleSubmit = async () => {
+    // Validate required fields
+    if (!formData.name || !formData.analysis_start_date || !formData.analysis_end_date) {
+      setError('Please fill in all required fields (Name, Start Date, End Date)')
+      return
+    }
+
     try {
+      setError('') // Clear any previous errors
       if (editingPortfolio) {
         await portfolioAPI.update(editingPortfolio.id, formData)
       } else {
@@ -83,7 +91,8 @@ function PortfolioList() {
       fetchPortfolios()
       handleCloseDialog()
     } catch (error) {
-      setError('Failed to save portfolio')
+      const errorMsg = error.response?.data?.error || error.message || 'Failed to save portfolio'
+      setError(errorMsg)
       console.error('Error saving portfolio:', error)
     }
   }
@@ -169,6 +178,7 @@ function PortfolioList() {
       <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
         <DialogTitle>{editingPortfolio ? 'Edit Portfolio' : 'New Portfolio'}</DialogTitle>
         <DialogContent>
+          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
           <TextField
             fullWidth
             margin="normal"
