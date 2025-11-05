@@ -28,14 +28,23 @@ def create_portfolio():
     data = request.get_json()
 
     try:
+        # Helper function to safely convert to float
+        def safe_float(value, default=0.0):
+            if value is None or value == '':
+                return default
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return default
+
         portfolio = Portfolio(
             name=data['name'],
             analysis_start_date=datetime.fromisoformat(data['analysis_start_date']).date(),
             analysis_end_date=datetime.fromisoformat(data['analysis_end_date']).date(),
-            initial_unfunded_equity=data.get('initial_unfunded_equity', 0.0),
-            beginning_cash=data.get('beginning_cash', 0.0),
-            fee=data.get('fee', 0.0),
-            beginning_nav=data.get('beginning_nav', 0.0),
+            initial_unfunded_equity=safe_float(data.get('initial_unfunded_equity')),
+            beginning_cash=safe_float(data.get('beginning_cash')),
+            fee=safe_float(data.get('fee')),
+            beginning_nav=safe_float(data.get('beginning_nav')),
             valuation_method=data.get('valuation_method', 'growth')
         )
 
@@ -54,6 +63,15 @@ def update_portfolio(portfolio_id):
     data = request.get_json()
 
     try:
+        # Helper function to safely convert to float
+        def safe_float(value, default=0.0):
+            if value is None or value == '':
+                return default
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return default
+
         if 'name' in data:
             portfolio.name = data['name']
         if 'analysis_start_date' in data:
@@ -61,13 +79,13 @@ def update_portfolio(portfolio_id):
         if 'analysis_end_date' in data:
             portfolio.analysis_end_date = datetime.fromisoformat(data['analysis_end_date']).date()
         if 'initial_unfunded_equity' in data:
-            portfolio.initial_unfunded_equity = data['initial_unfunded_equity']
+            portfolio.initial_unfunded_equity = safe_float(data['initial_unfunded_equity'])
         if 'beginning_cash' in data:
-            portfolio.beginning_cash = data['beginning_cash']
+            portfolio.beginning_cash = safe_float(data['beginning_cash'])
         if 'fee' in data:
-            portfolio.fee = data['fee']
+            portfolio.fee = safe_float(data['fee'])
         if 'beginning_nav' in data:
-            portfolio.beginning_nav = data['beginning_nav']
+            portfolio.beginning_nav = safe_float(data['beginning_nav'])
         if 'valuation_method' in data:
             portfolio.valuation_method = data['valuation_method']
 
