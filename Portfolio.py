@@ -2,13 +2,12 @@ from portfolio_manager.Property import Property
 from portfolio_manager.Loan import Loan
 from portfolio_manager.PreferredEquity import PreferredEquity
 from portfolio_manager.CarriedInterest import CarriedInterest, TierParams
+from portfolio_manager.date_utils import ensure_end_of_month
 import pandas as pd
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 from calendar import monthrange
-from collections import OrderedDict
 from typing import Optional
-import pandas as pd
 import logging
 import requests
 import numpy as np
@@ -73,12 +72,12 @@ class Portfolio:
             raise ValueError("start_date must be on or before end_date.")
 
         month_list = []
-        current_date = self.ensure_date(start_date)
+        current_date = ensure_end_of_month(start_date)
 
         while current_date <= end_date:
             month_list.append(current_date)
             # Move to the next month
-            current_date = self.ensure_date(current_date + relativedelta(months=1))
+            current_date = ensure_end_of_month(current_date + relativedelta(months=1))
 
         return month_list
 
@@ -134,22 +133,6 @@ class Portfolio:
                 df[col] = pd.to_datetime(df[col]).dt.date
         return df
 
-    def ensure_date(self, input_date):
-        """Ensure the input is a datetime.date object and adjust to month-end."""
-        if pd.isna(input_date):  # Handle NaN or NaT
-            return None
-
-        # Convert to date object if needed
-        if isinstance(input_date, pd.Timestamp):
-            input_date = input_date.date()
-        elif isinstance(input_date, datetime):
-            input_date = input_date.date()
-        elif not isinstance(input_date, date):
-            raise ValueError(f"Invalid date format: {input_date}")
-
-        # Ensure the date is the last day of the month
-        last_day = monthrange(input_date.year, input_date.month)[1]
-        return input_date.replace(day=last_day)
 
     def load_preferred_equity(self, df: Optional[pd.DataFrame] = None):
         if df is None:
@@ -178,7 +161,7 @@ class Portfolio:
         if df is None:
             # Read the data with specific columns
             df = self.read_import_file('Promotes', use_cols=['property_id_', 'date', 'cash_flow'])
-            df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
+            df['date'] = df['date'].apply(lambda x: ensure_end_of_month(x))
             #print(df.columns)
         # Ensure the DataFrame has the required columns
         required_columns = {'property_id_', 'date', 'cash_flow'}
@@ -212,8 +195,8 @@ class Portfolio:
                     id=row['id'],
                     name=row['name'],
                     property_type=row['property_type'],
-                    acquisition_date=self.ensure_date(row['acquisition_date']),
-                    disposition_date=self.ensure_date(row['disposition_date']),
+                    acquisition_date=ensure_end_of_month(row['acquisition_date']),
+                    disposition_date=ensure_end_of_month(row['disposition_date']),
                     acquisition_cost=row['acquisition_cost'],
                     disposition_price=row['disposition_price'],
                     address=row['address'],
@@ -227,12 +210,12 @@ class Portfolio:
                     loans = {},
                     market_value_growth=row['market_value_growth'],
                     ownership=row['ownership'],
-                    construction_end=self.ensure_date(row['construction_end']),
+                    construction_end=ensure_end_of_month(row['construction_end']),
                     equity_commitment=row['equity_commitment'],
                     partner_buyout_cost=row['partner_buyout_cost'],
-                    partner_buyout_date=self.ensure_date(row['partner_buyout_date']),
+                    partner_buyout_date=ensure_end_of_month(row['partner_buyout_date']),
                     partner_buyout_percent=row['partner_buyout_percent'],
-                    partial_sale_date=self.ensure_date(row['partial_sale_date']),
+                    partial_sale_date=ensure_end_of_month(row['partial_sale_date']),
                     partial_sale_percent=row['partial_sale_percent'],
                     partial_sale_proceeds=row['partial_sale_proceeds'],
                     encumbered=row['encumbered'],
@@ -251,18 +234,18 @@ class Portfolio:
 
         # Ensure proper data types and valid dates
         df['id'] = df['id'].fillna('').astype(str)
-        df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
+        df['date'] = df['date'].apply(lambda x: ensure_end_of_month(x))
 
         # Iterate through properties and update their cash flows
         for prop_id, property in self.properties.items():
             # Create dictionaries for cash flows ensuring dates are date objects
             noi = dict(zip(
-                df.loc[(df['cash_flow'] == 'noi') & (df['id'] == prop_id), 'date'].apply(self.ensure_date),
+                df.loc[(df['cash_flow'] == 'noi') & (df['id'] == prop_id), 'date'].apply(ensure_end_of_month),
                 df.loc[(df['cash_flow'] == 'noi') & (df['id'] == prop_id), 'amount']
             ))
 
             capex = dict(zip(
-                df.loc[(df['cash_flow'] == 'capex') & (df['id'] == prop_id), 'date'].apply(self.ensure_date),
+                df.loc[(df['cash_flow'] == 'capex') & (df['id'] == prop_id), 'date'].apply(ensure_end_of_month),
                 df.loc[(df['cash_flow'] == 'capex') & (df['id'] == prop_id), 'amount']
             ))
 
@@ -273,24 +256,24 @@ class Portfolio:
     def load_capital_flows(self, df: Optional[pd.DataFrame] = None):
         if df is None:
             df = self.read_import_file('Capital Flows')
-        df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
+        df['date'] = df['date'].apply(lambda x: ensure_end_of_month(x))
         capital_calls = dict(zip(
-            df.loc[(df['cash_flow'] == 'capital call'), 'date'].apply(self.ensure_date),
+            df.loc[(df['cash_flow'] == 'capital call'), 'date'].apply(ensure_end_of_month),
             df.loc[(df['cash_flow'] == 'capital call'), 'amount']
         ))
 
         redemptions = dict(zip(
-            df.loc[(df['cash_flow'] == 'redemption'), 'date'].apply(self.ensure_date),
+            df.loc[(df['cash_flow'] == 'redemption'), 'date'].apply(ensure_end_of_month),
             df.loc[(df['cash_flow'] == 'redemption'), 'amount']
         ))
 
         drip = dict(zip(
-            df.loc[(df['cash_flow'] == 'drip'), 'date'].apply(self.ensure_date),
+            df.loc[(df['cash_flow'] == 'drip'), 'date'].apply(ensure_end_of_month),
             df.loc[(df['cash_flow'] == 'drip'), 'amount']
         ))
 
         distributions = dict(zip(
-            df.loc[(df['cash_flow'] == 'distribution'), 'date'].apply(self.ensure_date),
+            df.loc[(df['cash_flow'] == 'distribution'), 'date'].apply(ensure_end_of_month),
             df.loc[(df['cash_flow'] == 'distribution'), 'amount']
         ))
         self.capital_calls = capital_calls
@@ -332,7 +315,7 @@ class Portfolio:
             for property_id, property_ in self.properties.items():
                 if loan.property_id == property_id:
                     property_.add_loan(loan)
-                    print(f"Adding loan with ID {loan.id} to property {row['property_id']}")
+                    logging.debug(f"Adding loan with ID {loan.id} to property {row['property_id']}")
 
     def load_unsecured_loans(self, df: Optional[pd.DataFrame] = None):
         if df is None:
@@ -370,7 +353,7 @@ class Portfolio:
         for _, row in df.iterrows():
             loan_id = row['id']
             flow_type = row['flow_type']
-            date_ = self.ensure_date(row['date'])
+            date_ = ensure_end_of_month(row['date'])
             amount = row['amount']
 
             # Sequentially apply draws and paydowns
@@ -821,7 +804,7 @@ class Portfolio:
 
     def value_property_loans(self, as_of_date, discount_rate_spread):
         loan_schedules = []
-        as_of_date = self.ensure_date(as_of_date)
+        as_of_date = ensure_end_of_month(as_of_date)
         for property in self.properties.values():
             if property.loans:  # Check if property has loans attribute and it's not empty
                 for loan in property.loans.values():
@@ -840,7 +823,7 @@ class Portfolio:
 
     def value_property_loans_with_valuer(self, as_of_date):
         loan_schedules = []
-        as_of_date = self.ensure_date(as_of_date)
+        as_of_date = ensure_end_of_month(as_of_date)
         for property in self.properties.values():
             if property.loans:  # Check if property has loans attribute and it's not empty
                 for loan in property.loans.values():
@@ -877,7 +860,7 @@ class Portfolio:
         loan_schedules = []
         columns = ['Loan Id', 'As of Date', 'Note Rate', 'Market Rate', 'Spread',
                    'Ownership Share', 'Current Balance', 'Loan Value']
-        as_of_date = self.ensure_date(as_of_date)
+        as_of_date = ensure_end_of_month(as_of_date)
         for property in self.properties.values():
             if property.loans:  # Check if property has loans attribute and it's not empty
                 for loan in property.loans.values():
@@ -932,8 +915,8 @@ class Portfolio:
         return df
 
     def calculate_change_in_loan_values(self, current_period, prior_period):
-        current_period = self.ensure_date(current_period)
-        prior_period = self.ensure_date(prior_period)
+        current_period = ensure_end_of_month(current_period)
+        prior_period = ensure_end_of_month(prior_period)
         current_df = self.value_property_loans_at_share_with_valuer(current_period)
         prior_df = self.value_property_loans_at_share_with_valuer(prior_period)
         current_df = current_df.merge(prior_df, on='Loan Id', how='left')
@@ -943,13 +926,20 @@ class Portfolio:
 
     def fetch_treasury_rates(self, series_id: str = 'DGS10'):
         # Fetch rates from FRED API
+        import os
+
         fred_base_url = "https://api.stlouisfed.org/fred/series/observations"
         start_date = date(2013, 1, 1)  # Fixed start date
         end_date = date.today()  # Use the current date as the end date
 
+        # SECURITY: API key should be set as environment variable FRED_API_KEY
+        api_key = os.environ.get('FRED_API_KEY')
+        if not api_key:
+            raise ValueError("FRED_API_KEY environment variable not set")
+
         fred_params = {
             "series_id": series_id,
-            "api_key": "b73eb39061969ce96b4a673f93d0898e",
+            "api_key": api_key,
             "file_type": "json",
             "observation_start": start_date.strftime("%Y-%m-%d"),
             "observation_end": end_date.strftime("%Y-%m-%d"),
@@ -984,7 +974,7 @@ class Portfolio:
             for rate_entry in chatham_data.get("Rates", []):
                 try:
                     raw_date = date.fromisoformat(rate_entry["Date"][:10])  # Extract only the date part
-                    eom_date = self.ensure_date(raw_date)  # Convert to end-of-month using ensure_date
+                    eom_date = ensure_end_of_month(raw_date)  # Convert to end-of-month using ensure_date
                     rate_value = rate_entry["Rate"]
                     self.treasury_rates[eom_date] = rate_value  # Add directly in decimal format
                 except (ValueError, KeyError):

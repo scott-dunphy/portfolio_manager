@@ -3,7 +3,8 @@ from datetime import date, datetime
 from typing import Optional, List, Tuple
 from calendar import monthrange
 from decimal import Decimal
-from portfolio_manager.Loan import Loan  # Adjust import path as needed
+from portfolio_manager.Loan import Loan
+from portfolio_manager.date_utils import ensure_end_of_month
 
 
 class PreferredEquity:
@@ -37,7 +38,7 @@ class PreferredEquity:
         """
         Record a preferred equity ownership change event at the given date.
         """
-        change_date = self.get_end_of_month(change_date)  # Align to month-end
+        change_date = ensure_end_of_month(change_date)  # Align to month-end
         self._validate_ownership(new_ownership)
         self.pe_ownership_changes.append((change_date, Decimal(new_ownership)))
         # Keep changes sorted by date
@@ -48,7 +49,7 @@ class PreferredEquity:
         Get the preferred equity ownership share for a specific date.
         If no change date is prior, it defaults to 0.0.
         """
-        query_date = self.get_end_of_month(query_date)
+        query_date = ensure_end_of_month(query_date)
         if not self.pe_ownership_changes:
             return Decimal(0.0)
 
@@ -69,7 +70,7 @@ class PreferredEquity:
         if df_loan.empty:
             return {}
 
-        df_loan['date'] = df_loan['date'].apply(self.get_end_of_month)
+        df_loan['date'] = df_loan['date'].apply(ensure_end_of_month)
         schedule_dates = sorted(df_loan['date'].unique())
 
         # Build the ownership series
@@ -85,25 +86,6 @@ class PreferredEquity:
 
         return ownership_series
 
-    def get_end_of_month(self, input_date: date) -> date:
-        """
-        Ensure the date is a `date` object and align it to the last day of the month.
-        """
-        if pd.isna(input_date):  # Handle NaN or NaT
-            return None
-
-        # Convert to date object if needed
-        if isinstance(input_date, pd.Timestamp):
-            input_date = input_date.date()
-        elif isinstance(input_date, datetime):
-            input_date = input_date.date()
-        elif not isinstance(input_date, date):
-            raise ValueError(f"Invalid date format: {input_date}")
-
-        # Ensure the date is the last day of the month
-        last_day = monthrange(input_date.year, input_date.month)[1]
-        return input_date.replace(day=last_day)
-
     # ---------------------------------------------------------------------
     #               GENERATE PREFERRED EQUITY CASH FLOWS
     # ---------------------------------------------------------------------
@@ -116,7 +98,7 @@ class PreferredEquity:
         if df_loan.empty:
             return pd.DataFrame()
 
-        df_loan['date'] = df_loan['date'].apply(self.get_end_of_month)
+        df_loan['date'] = df_loan['date'].apply(ensure_end_of_month)
 
         # Rename columns for preferred equity perspective
         df_loan['noi'] = df_loan['interest_payment']
@@ -145,7 +127,7 @@ class PreferredEquity:
 
         ownership_dict = self.generate_pe_ownership_series()
         df_ownership = pd.DataFrame(list(ownership_dict.items()), columns=['date', 'ownership_share'])
-        df_ownership['date'] = df_ownership['date'].apply(self.get_end_of_month)  # Align dates
+        df_ownership['date'] = df_ownership['date'].apply(ensure_end_of_month)  # Align dates
         df_ownership['ownership_share'] = df_ownership['ownership_share'].astype(float)
         df_ownership.sort_values('date', inplace=True)
 
@@ -173,7 +155,7 @@ class PreferredEquity:
         if df_schedule.empty:
             return None
         min_ts = df_schedule['date'].min()
-        return self.get_end_of_month(min_ts)
+        return ensure_end_of_month(min_ts)
 
     def _validate_ownership(self, ownership: float):
         """

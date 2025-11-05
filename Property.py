@@ -1,10 +1,10 @@
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 from calendar import monthrange
-from collections import OrderedDict
 from typing import Optional
 from portfolio_manager.Loan import Loan
 from portfolio_manager.CarriedInterest import CarriedInterest, TierParams
+from portfolio_manager.date_utils import ensure_end_of_month
 import pandas as pd
 from itertools import accumulate
 import logging
@@ -57,15 +57,15 @@ class Property:
         self.state = state
         self.zipcode = zipcode
         self.building_size = building_size
-        self.acquisition_date = self.get_last_day_of_month(acquisition_date)
-        self.disposition_date = self.get_last_day_of_month(disposition_date)
+        self.acquisition_date = ensure_end_of_month(acquisition_date)
+        self.disposition_date = ensure_end_of_month(disposition_date)
         self.acquisition_cost = acquisition_cost
         self.cap_rate = cap_rate
         self.exit_cap_rate = exit_cap_rate
         self.capex_percent_of_noi = capex_percent_of_noi
         self.disposition_price = disposition_price
         self.loans = loans or {}
-        self.analysis_date = self.ensure_date(self.get_last_day_of_month(analysis_date))
+        self.analysis_date = ensure_end_of_month(ensure_end_of_month(analysis_date))
         self.analysis_length = int(analysis_length)
         self.market_value = market_value
         self.market_value_growth = market_value_growth
@@ -79,7 +79,7 @@ class Property:
         self.effective_shares = None
         self.month_list = self.get_month_list(self.analysis_date, self.analysis_length)
         self.ownership_changes = []
-        self.construction_end = self.ensure_date(construction_end)
+        self.construction_end = ensure_end_of_month(construction_end)
         self.equity_commitment = equity_commitment
         self.partial_sale_date = partial_sale_date
         self.partner_buyout_date = partner_buyout_date
@@ -105,14 +105,6 @@ class Property:
         self.unfunded_equity_commitments = []
         self.market_values = self.grow_market_value()
 
-    def get_last_day_of_month(self, input_date) -> date:
-        if pd.isna(input_date):  # Handle NaN, NaT, or blank cells
-            return None
-        if not isinstance(input_date, date):  # Ensure input_date is a valid date object
-            raise ValueError(f"Invalid date: {input_date}")
-
-        last_day = monthrange(input_date.year, input_date.month)[1]
-        return input_date.replace(day=last_day)
 
     def add_promote_tier(self, tier: TierParams):
         self.tiers.append(tier)
@@ -151,7 +143,7 @@ class Property:
 
         # Normalize the date using ensure_date method
         # This should return a Python date object
-        date_ = self.ensure_date(date_)
+        date_ = ensure_end_of_month(date_)
 
         # Convert any existing 'date' column entries to date objects if they aren't already
         if not self.promote_cash_flows.empty:
@@ -181,7 +173,7 @@ class Property:
             for loan in self.loans.values():
                 if loan.foreclosure_date:
                     self.foreclosure_date = loan.foreclosure_date
-                    date_before_foreclosure = self.ensure_date(loan.foreclosure_date + relativedelta(months=-1))
+                    date_before_foreclosure = ensure_end_of_month(loan.foreclosure_date + relativedelta(months=-1))
                     self.market_values = self.grow_market_value()
                     return self.get_market_value_by_date(date_before_foreclosure)
         return 0
@@ -194,22 +186,6 @@ class Property:
     def set_treasury_rates(self, treasury_rates):
         self.treasury_rates = treasury_rates
 
-    def ensure_date(self, input_date):
-        """Ensure the input is a datetime.date object and adjust to month-end."""
-        if pd.isna(input_date):  # Handle NaN or NaT
-            return None
-
-        # Convert to date object if needed
-        if isinstance(input_date, pd.Timestamp):
-            input_date = input_date.date()
-        elif isinstance(input_date, datetime):
-            input_date = input_date.date()
-        elif not isinstance(input_date, date):
-            raise ValueError(f"Invalid date format: {input_date}")
-
-        # Ensure the date is the last day of the month
-        last_day = monthrange(input_date.year, input_date.month)[1]
-        return input_date.replace(day=last_day)
 
     def process_ownership_events(self):
         """Process all ownership changes (buyouts, partial sales, etc.) in chronological order."""
@@ -221,7 +197,7 @@ class Property:
 
         # Disposition event
         if self.disposition_date:
-            effective_date = self.get_last_day_of_month(self.disposition_date + relativedelta(months=1))
+            effective_date = ensure_end_of_month(self.disposition_date + relativedelta(months=1))
             events.append((effective_date, 0.0))
 
         # Sort all events by date
@@ -232,14 +208,14 @@ class Property:
 
         if self.partner_buyout_date and self.partner_buyout_percent != 0:
             # Apply partner buyout to current ownership the month after the buyout date
-            effective_date = self.get_last_day_of_month(self.partner_buyout_date)
+            effective_date = ensure_end_of_month(self.partner_buyout_date)
             new_ownership = min(current_ownership + self.partner_buyout_percent, 1.0)
             events.append((effective_date, new_ownership))
             current_ownership = new_ownership  # Update for subsequent calculations
 
         if self.partial_sale_date and self.partial_sale_percent != 0:
             # Apply partial sale to current ownership the month after the sale date
-            effective_date = self.get_last_day_of_month(self.partial_sale_date + relativedelta(months=1))
+            effective_date = ensure_end_of_month(self.partial_sale_date + relativedelta(months=1))
             new_ownership = max(current_ownership - self.partial_sale_percent, 0.0)
             events.append((effective_date, new_ownership))
             current_ownership = new_ownership  # Update for subsequent calculations
@@ -248,11 +224,11 @@ class Property:
         events.sort(key=lambda x: x[0])
 
         # Reassign the processed events to ownership changes
-        self.ownership_changes = [(self.get_last_day_of_month(date), ownership) for date, ownership in events]
+        self.ownership_changes = [(ensure_end_of_month(date), ownership) for date, ownership in events]
     def add_ownership_change(self, change_date: date, new_ownership: float):
         """Add an ownership change event."""
-        change_date = self.ensure_date(change_date)  # Ensure the date is a `datetime.date` object
-        self.ownership_changes.append((self.get_last_day_of_month(change_date), new_ownership))
+        change_date = ensure_end_of_month(change_date)  # Ensure the date is a `datetime.date` object
+        self.ownership_changes.append((ensure_end_of_month(change_date), new_ownership))
         self.ownership_changes.sort()  # Ensure events are sorted by date
 
     def get_ownership_share(self, query_date: date) -> float:
@@ -270,14 +246,14 @@ class Property:
 
     def add_partial_sale(self, partial_date, proceeds, sale_percent):
         """Record a partial sale event."""
-        self.partial_sale_date = self.ensure_date(partial_date)
+        self.partial_sale_date = ensure_end_of_month(partial_date)
         self.partial_sale_proceeds = proceeds
         self.partial_sale_percent = sale_percent
         self.process_ownership_events()
 
     def add_partner_buyout(self, buyout_date, cost, buyout_percent):
         """Record a partner buyout event."""
-        self.partner_buyout_date = self.ensure_date(buyout_date)
+        self.partner_buyout_date = ensure_end_of_month(buyout_date)
         self.partner_buyout_cost = cost
         self.partner_buyout_percent = buyout_percent
         self.process_ownership_events()
@@ -305,7 +281,7 @@ class Property:
 
     def get_month_list(self, start_date: date, num_months: int) -> list:
         """Generate a list of the last day of each month, ensuring all are `datetime.date` objects."""
-        return [self.ensure_date(self.get_last_day_of_month(start_date + relativedelta(months=i))) for i in
+        return [ensure_end_of_month(ensure_end_of_month(start_date + relativedelta(months=i))) for i in
                 range(num_months)]
 
     def get_equity_commitment(self):
@@ -499,7 +475,7 @@ class Property:
         self.capex = capex
 
     def update_noi_by_date(self, date_, noi):
-        date_ = self.ensure_date(date_)
+        date_ = ensure_end_of_month(date_)
         if date_ is None:
             raise ValueError("The provided date is invalid or could not be converted.")
         if not isinstance(noi, (int, float)):
@@ -509,7 +485,7 @@ class Property:
         self.noi[date_] = noi
 
     def update_capex_by_date(self, date_, capex):
-        date_ = self.ensure_date(date_)
+        date_ = ensure_end_of_month(date_)
         if date_ is None:
             raise ValueError("The provided date is invalid or could not be converted.")
         if not isinstance(capex, (int, float)):
@@ -519,11 +495,11 @@ class Property:
         self.capex[date_] = capex
 
     def get_capex(self, date_,):
-        date_ = self.ensure_date(date_)
+        date_ = ensure_end_of_month(date_)
         return self.capex[date_]
 
     def get_noi(self, date_,):
-        date_ = self.ensure_date(date_)
+        date_ = ensure_end_of_month(date_)
         return self.noi[date_]
 
     def get_cash_flows_df(self):
@@ -690,8 +666,8 @@ class Property:
 
     def calculate_effective_share(self, date_, nav):
         df = self.promote_cash_flows.copy()
-        df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
-        date_ = self.ensure_date(date_)
+        df['date'] = df['date'].apply(lambda x: ensure_end_of_month(x))
+        date_ = ensure_end_of_month(date_)
         df['cash_flow'] = df['cash_flow'].astype(float)
         if date_ in df['date'].values:
             df.loc[df['date'] == date_, 'cash_flow'] += float(nav)
@@ -715,7 +691,7 @@ class Property:
 
     def calculate_effective_shares(self):
         df = self.combine_loan_cash_flows_df()
-        df['date'] = df['date'].apply(lambda x: self.ensure_date(x))
+        df['date'] = df['date'].apply(lambda x: ensure_end_of_month(x))
         df['nav'] = df['market_value'] - df.get('ending_balance', 0)
 
         # Aggregate NAV by date to avoid duplicate processing
@@ -770,8 +746,8 @@ class Property:
         for event_date, column in [(self.partner_buyout_date, 'partner_buyout_cost'),
                                    (self.partial_sale_date, 'partial_sale_proceeds')]:
             if event_date:
-                event_date = self.ensure_date(event_date)
-                next_month = self.get_last_day_of_month(event_date + relativedelta(months=1))
+                event_date = ensure_end_of_month(event_date)
+                next_month = ensure_end_of_month(event_date + relativedelta(months=1))
 
                 if event_date in adjusted_cash_flows['date'].values and next_month in adjusted_cash_flows[
                     'date'].values:
@@ -854,7 +830,7 @@ class Property:
         noi_sums = []
         start_date = date_
         for _ in range(12):
-            next_month = self.ensure_date(start_date + relativedelta(months=1))
+            next_month = ensure_end_of_month(start_date + relativedelta(months=1))
             monthly_sum = sum(
                 value for date, value in self.noi.items()
                 if start_date <= date < next_month
