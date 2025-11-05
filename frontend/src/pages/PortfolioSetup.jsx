@@ -1,0 +1,720 @@
+import React, { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import {
+  Box, Button, Typography, Paper, TextField, Grid, Card, CardContent,
+  CardActions, IconButton, Accordion, AccordionSummary, AccordionDetails,
+  Divider, Alert, MenuItem, Chip
+} from '@mui/material'
+import {
+  Add as AddIcon,
+  Delete as DeleteIcon,
+  ExpandMore as ExpandMoreIcon,
+  Check as CheckIcon
+} from '@mui/icons-material'
+import { portfolioAPI, propertyAPI, loanAPI } from '../services/api'
+
+function PortfolioSetup() {
+  const { portfolioId } = useParams()
+  const navigate = useNavigate()
+  const [portfolio, setPortfolio] = useState(null)
+  const [properties, setProperties] = useState([])
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  // Property form state
+  const [showPropertyForm, setShowPropertyForm] = useState(false)
+  const [propertyFormData, setPropertyFormData] = useState({
+    property_id: '',
+    property_name: '',
+    property_type: '',
+    address: '',
+    city: '',
+    state: '',
+    zip_code: '',
+    purchase_price: '',
+    purchase_date: '',
+    exit_date: '',
+    exit_cap_rate: '',
+    year_1_cap_rate: '',
+    building_size: '',
+    noi_growth_rate: '',
+    initial_noi: '',
+    valuation_method: 'growth'
+  })
+
+  // Loan form state
+  const [selectedPropertyForLoan, setSelectedPropertyForLoan] = useState(null)
+  const [showLoanForm, setShowLoanForm] = useState(false)
+  const [loanFormData, setLoanFormData] = useState({
+    loan_id: '',
+    loan_name: '',
+    principal_amount: '',
+    interest_rate: '',
+    origination_date: '',
+    maturity_date: '',
+    payment_frequency: 'monthly',
+    loan_type: '',
+    amortization_period_months: '',
+    io_period_months: 0,
+    origination_fee: 0,
+    exit_fee: 0
+  })
+
+  useEffect(() => {
+    fetchPortfolio()
+    fetchProperties()
+  }, [portfolioId])
+
+  const fetchPortfolio = async () => {
+    try {
+      const response = await portfolioAPI.getById(portfolioId)
+      setPortfolio(response.data)
+    } catch (error) {
+      setError('Failed to load portfolio')
+      console.error('Error fetching portfolio:', error)
+    }
+  }
+
+  const fetchProperties = async () => {
+    try {
+      const response = await propertyAPI.getAll(portfolioId)
+      // Fetch loans for each property
+      const propertiesWithLoans = await Promise.all(
+        response.data.map(async (property) => {
+          try {
+            const loansResponse = await loanAPI.getAll(portfolioId)
+            const propertyLoans = loansResponse.data.filter(
+              loan => loan.property_id === property.id
+            )
+            return { ...property, loans: propertyLoans }
+          } catch (err) {
+            console.error('Error fetching loans for property:', err)
+            return { ...property, loans: [] }
+          }
+        })
+      )
+      setProperties(propertiesWithLoans)
+    } catch (error) {
+      console.error('Error fetching properties:', error)
+      setProperties([])
+    }
+  }
+
+  const resetPropertyForm = () => {
+    setPropertyFormData({
+      property_id: '',
+      property_name: '',
+      property_type: '',
+      address: '',
+      city: '',
+      state: '',
+      zip_code: '',
+      purchase_price: '',
+      purchase_date: '',
+      exit_date: '',
+      exit_cap_rate: '',
+      year_1_cap_rate: '',
+      building_size: '',
+      noi_growth_rate: '',
+      initial_noi: '',
+      valuation_method: 'growth'
+    })
+  }
+
+  const resetLoanForm = () => {
+    setLoanFormData({
+      loan_id: '',
+      loan_name: '',
+      principal_amount: '',
+      interest_rate: '',
+      origination_date: '',
+      maturity_date: '',
+      payment_frequency: 'monthly',
+      loan_type: '',
+      amortization_period_months: '',
+      io_period_months: 0,
+      origination_fee: 0,
+      exit_fee: 0
+    })
+  }
+
+  const handlePropertyChange = (e) => {
+    const { name, value } = e.target
+    setPropertyFormData(prev => ({ ...prev, [name]: value }))
+  }
+
+  const handleLoanChange = (e) => {
+    const { name, value } = e.target
+    setLoanFormData(prev => ({ ...prev, [name]: value }))
+  }
+
+  const handleAddProperty = async (e) => {
+    e.preventDefault()
+    setError('')
+    setSuccess('')
+
+    try {
+      await propertyAPI.create({
+        ...propertyFormData,
+        portfolio_id: portfolioId
+      })
+      setSuccess('Property added successfully!')
+      resetPropertyForm()
+      setShowPropertyForm(false)
+      fetchProperties()
+    } catch (error) {
+      setError('Failed to add property: ' + (error.response?.data?.error || error.message))
+      console.error('Error adding property:', error)
+    }
+  }
+
+  const handleAddLoan = async (e) => {
+    e.preventDefault()
+    setError('')
+    setSuccess('')
+
+    if (!selectedPropertyForLoan) {
+      setError('Please select a property for this loan')
+      return
+    }
+
+    try {
+      await loanAPI.create({
+        ...loanFormData,
+        portfolio_id: portfolioId,
+        property_id: selectedPropertyForLoan.id
+      })
+      setSuccess('Loan added successfully!')
+      resetLoanForm()
+      setShowLoanForm(false)
+      setSelectedPropertyForLoan(null)
+      fetchProperties()
+    } catch (error) {
+      setError('Failed to add loan: ' + (error.response?.data?.error || error.message))
+      console.error('Error adding loan:', error)
+    }
+  }
+
+  const handleDeleteProperty = async (propertyId) => {
+    if (window.confirm('Are you sure you want to delete this property and all its loans?')) {
+      try {
+        await propertyAPI.delete(propertyId)
+        setSuccess('Property deleted successfully!')
+        fetchProperties()
+      } catch (error) {
+        setError('Failed to delete property')
+        console.error('Error deleting property:', error)
+      }
+    }
+  }
+
+  const handleDeleteLoan = async (loanId) => {
+    if (window.confirm('Are you sure you want to delete this loan?')) {
+      try {
+        await loanAPI.delete(loanId)
+        setSuccess('Loan deleted successfully!')
+        fetchProperties()
+      } catch (error) {
+        setError('Failed to delete loan')
+        console.error('Error deleting loan:', error)
+      }
+    }
+  }
+
+  const handleAddLoanToProperty = (property) => {
+    setSelectedPropertyForLoan(property)
+    setShowLoanForm(true)
+    setShowPropertyForm(false)
+  }
+
+  const handleFinish = () => {
+    navigate('/portfolios/' + portfolioId)
+  }
+
+  if (!portfolio) {
+    return <Typography>Loading...</Typography>
+  }
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Box>
+          <Typography variant="h4">Set Up Portfolio: {portfolio.name}</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            Add properties and loans to your portfolio
+          </Typography>
+        </Box>
+        <Button variant="outlined" onClick={handleFinish}>
+          Done
+        </Button>
+      </Box>
+
+      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}
+      {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess('')}>{success}</Alert>}
+
+      <Grid container spacing={3}>
+        {/* Left side - Forms */}
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3, mb: 3 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6">Add Property</Typography>
+              {!showPropertyForm && (
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => {
+                    setShowPropertyForm(true)
+                    setShowLoanForm(false)
+                    setSelectedPropertyForLoan(null)
+                  }}
+                  size="small"
+                >
+                  New Property
+                </Button>
+              )}
+            </Box>
+
+            {showPropertyForm && (
+              <form onSubmit={handleAddProperty}>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Property ID"
+                      name="property_id"
+                      value={propertyFormData.property_id}
+                      onChange={handlePropertyChange}
+                      required
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Property Name"
+                      name="property_name"
+                      value={propertyFormData.property_name}
+                      onChange={handlePropertyChange}
+                      required
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Property Type"
+                      name="property_type"
+                      value={propertyFormData.property_type}
+                      onChange={handlePropertyChange}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Purchase Price"
+                      name="purchase_price"
+                      type="number"
+                      value={propertyFormData.purchase_price}
+                      onChange={handlePropertyChange}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Address"
+                      name="address"
+                      value={propertyFormData.address}
+                      onChange={handlePropertyChange}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      fullWidth
+                      label="City"
+                      name="city"
+                      value={propertyFormData.city}
+                      onChange={handlePropertyChange}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      fullWidth
+                      label="State"
+                      name="state"
+                      value={propertyFormData.state}
+                      onChange={handlePropertyChange}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      fullWidth
+                      label="Zip Code"
+                      name="zip_code"
+                      value={propertyFormData.zip_code}
+                      onChange={handlePropertyChange}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Purchase Date"
+                      name="purchase_date"
+                      type="date"
+                      value={propertyFormData.purchase_date}
+                      onChange={handlePropertyChange}
+                      InputLabelProps={{ shrink: true }}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Exit Date"
+                      name="exit_date"
+                      type="date"
+                      value={propertyFormData.exit_date}
+                      onChange={handlePropertyChange}
+                      InputLabelProps={{ shrink: true }}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                      <Button
+                        onClick={() => {
+                          setShowPropertyForm(false)
+                          resetPropertyForm()
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="submit" variant="contained">
+                        Add Property
+                      </Button>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </form>
+            )}
+          </Paper>
+
+          <Paper sx={{ p: 3 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6">Add Loan</Typography>
+              {!showLoanForm && properties.length > 0 && (
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => {
+                    if (properties.length === 0) {
+                      setError('Please add a property first')
+                      return
+                    }
+                    setShowLoanForm(true)
+                    setShowPropertyForm(false)
+                    setSelectedPropertyForLoan(properties[0])
+                  }}
+                  size="small"
+                >
+                  New Loan
+                </Button>
+              )}
+            </Box>
+
+            {properties.length === 0 && !showLoanForm && (
+              <Typography variant="body2" color="text.secondary">
+                Add a property first to create loans
+              </Typography>
+            )}
+
+            {showLoanForm && (
+              <form onSubmit={handleAddLoan}>
+                <Grid container spacing={2}>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Property"
+                      value={selectedPropertyForLoan?.id || ''}
+                      onChange={(e) => {
+                        const property = properties.find(p => p.id === e.target.value)
+                        setSelectedPropertyForLoan(property)
+                      }}
+                      required
+                      size="small"
+                    >
+                      {properties.map((property) => (
+                        <MenuItem key={property.id} value={property.id}>
+                          {property.property_name}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Loan ID"
+                      name="loan_id"
+                      value={loanFormData.loan_id}
+                      onChange={handleLoanChange}
+                      required
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Loan Name"
+                      name="loan_name"
+                      value={loanFormData.loan_name}
+                      onChange={handleLoanChange}
+                      required
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Principal Amount"
+                      name="principal_amount"
+                      type="number"
+                      value={loanFormData.principal_amount}
+                      onChange={handleLoanChange}
+                      required
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Interest Rate (decimal)"
+                      name="interest_rate"
+                      type="number"
+                      value={loanFormData.interest_rate}
+                      onChange={handleLoanChange}
+                      inputProps={{ step: 0.001 }}
+                      required
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Origination Date"
+                      name="origination_date"
+                      type="date"
+                      value={loanFormData.origination_date}
+                      onChange={handleLoanChange}
+                      InputLabelProps={{ shrink: true }}
+                      required
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Maturity Date"
+                      name="maturity_date"
+                      type="date"
+                      value={loanFormData.maturity_date}
+                      onChange={handleLoanChange}
+                      InputLabelProps={{ shrink: true }}
+                      required
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Payment Frequency"
+                      name="payment_frequency"
+                      value={loanFormData.payment_frequency}
+                      onChange={handleLoanChange}
+                      size="small"
+                    >
+                      <MenuItem value="monthly">Monthly</MenuItem>
+                      <MenuItem value="quarterly">Quarterly</MenuItem>
+                      <MenuItem value="annually">Annually</MenuItem>
+                    </TextField>
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Loan Type"
+                      name="loan_type"
+                      value={loanFormData.loan_type}
+                      onChange={handleLoanChange}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                      <Button
+                        onClick={() => {
+                          setShowLoanForm(false)
+                          setSelectedPropertyForLoan(null)
+                          resetLoanForm()
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="submit" variant="contained">
+                        Add Loan
+                      </Button>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </form>
+            )}
+          </Paper>
+        </Grid>
+
+        {/* Right side - Property and Loan List */}
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3 }}>
+            <Typography variant="h6" sx={{ mb: 2 }}>
+              Properties & Loans ({properties.length} {properties.length === 1 ? 'property' : 'properties'})
+            </Typography>
+
+            {properties.length === 0 ? (
+              <Box sx={{ textAlign: 'center', py: 4 }}>
+                <Typography variant="body2" color="text.secondary">
+                  No properties added yet. Add your first property to get started.
+                </Typography>
+              </Box>
+            ) : (
+              <Box>
+                {properties.map((property, index) => (
+                  <Accordion key={property.id} defaultExpanded={index === 0}>
+                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', pr: 2 }}>
+                        <Box>
+                          <Typography variant="subtitle1">{property.property_name}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {property.property_id} • {property.loans?.length || 0} loan{property.loans?.length === 1 ? '' : 's'}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </AccordionSummary>
+                    <AccordionDetails>
+                      <Box>
+                        <Grid container spacing={1} sx={{ mb: 2 }}>
+                          {property.address && (
+                            <Grid item xs={12}>
+                              <Typography variant="body2">
+                                <strong>Address:</strong> {property.address}
+                                {property.city && `, ${property.city}`}
+                                {property.state && `, ${property.state}`}
+                                {property.zip_code && ` ${property.zip_code}`}
+                              </Typography>
+                            </Grid>
+                          )}
+                          {property.property_type && (
+                            <Grid item xs={12} sm={6}>
+                              <Typography variant="body2">
+                                <strong>Type:</strong> {property.property_type}
+                              </Typography>
+                            </Grid>
+                          )}
+                          {property.purchase_price && (
+                            <Grid item xs={12} sm={6}>
+                              <Typography variant="body2">
+                                <strong>Purchase Price:</strong> ${parseFloat(property.purchase_price).toLocaleString()}
+                              </Typography>
+                            </Grid>
+                          )}
+                        </Grid>
+
+                        <Divider sx={{ my: 2 }} />
+
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                          <Typography variant="subtitle2">Loans</Typography>
+                          <Button
+                            size="small"
+                            startIcon={<AddIcon />}
+                            onClick={() => handleAddLoanToProperty(property)}
+                          >
+                            Add Loan
+                          </Button>
+                        </Box>
+
+                        {property.loans && property.loans.length > 0 ? (
+                          <Box sx={{ pl: 2 }}>
+                            {property.loans.map((loan) => (
+                              <Card key={loan.id} variant="outlined" sx={{ mb: 1 }}>
+                                <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
+                                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                    <Box>
+                                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                                        {loan.loan_name}
+                                      </Typography>
+                                      <Typography variant="caption" color="text.secondary">
+                                        {loan.loan_id}
+                                      </Typography>
+                                      <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                        Principal: ${parseFloat(loan.principal_amount).toLocaleString()}
+                                      </Typography>
+                                      <Typography variant="body2">
+                                        Rate: {(parseFloat(loan.interest_rate) * 100).toFixed(2)}%
+                                      </Typography>
+                                    </Box>
+                                    <IconButton
+                                      size="small"
+                                      color="error"
+                                      onClick={() => handleDeleteLoan(loan.id)}
+                                    >
+                                      <DeleteIcon fontSize="small" />
+                                    </IconButton>
+                                  </Box>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </Box>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary" sx={{ pl: 2, fontStyle: 'italic' }}>
+                            No loans added yet
+                          </Typography>
+                        )}
+
+                        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
+                          <Button
+                            size="small"
+                            color="error"
+                            startIcon={<DeleteIcon />}
+                            onClick={() => handleDeleteProperty(property.id)}
+                          >
+                            Delete Property
+                          </Button>
+                        </Box>
+                      </Box>
+                    </AccordionDetails>
+                  </Accordion>
+                ))}
+              </Box>
+            )}
+          </Paper>
+        </Grid>
+      </Grid>
+
+      <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
+        <Button
+          variant="contained"
+          size="large"
+          startIcon={<CheckIcon />}
+          onClick={handleFinish}
+        >
+          Finish Setup
+        </Button>
+      </Box>
+    </Box>
+  )
+}
+
+export default PortfolioSetup

@@ -104,11 +104,14 @@ function PortfolioList() {
     try {
       if (editingPortfolio) {
         await portfolioAPI.update(editingPortfolio.id, formData)
+        fetchPortfolios()
+        handleCloseDialog()
       } else {
-        await portfolioAPI.create(formData)
+        const response = await portfolioAPI.create(formData)
+        handleCloseDialog()
+        // Navigate to setup page for new portfolios
+        navigate(`/portfolios/${response.data.id}/setup`)
       }
-      fetchPortfolios()
-      handleCloseDialog()
     } catch (error) {
       const errorMessage = error.response?.data?.error || 'Failed to save portfolio'
       setDialogError(errorMessage)
