@@ -10,6 +10,7 @@ import Container from '@mui/material/Container'
 
 import PortfolioList from './pages/PortfolioList'
 import PortfolioDetail from './pages/PortfolioDetail'
+import PortfolioSetup from './pages/PortfolioSetup'
 import PropertyList from './pages/PropertyList'
 import PropertyForm from './pages/PropertyForm'
 import LoanList from './pages/LoanList'
@@ -42,6 +43,7 @@ function App() {
         <Container sx={{ mt: 4, mb: 4, flexGrow: 1 }}>
           <Routes>
             <Route path="/" element={<PortfolioList />} />
+            <Route path="/portfolios/:portfolioId/setup" element={<PortfolioSetup />} />
             <Route path="/portfolios/:id" element={<PortfolioDetail />} />
             <Route path="/properties" element={<PropertyList />} />
             <Route path="/properties/new" element={<PropertyForm />} />
