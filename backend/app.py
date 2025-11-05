@@ -36,7 +36,7 @@ app = create_app()
 def index():
     return jsonify({"message": "Portfolio Manager API", "version": "1.0"})
 
-@app.route('/health')
+@app.route('/api/health')
 def health():
     return jsonify({"status": "healthy"})
 
