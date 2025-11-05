@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import {
   Box, Button, Card, CardContent, CardActions, Typography, Grid,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
-  IconButton, Alert
+  IconButton, Alert, Chip
 } from '@mui/material'
-import { Add as AddIcon, Delete as DeleteIcon, Edit as EditIcon } from '@mui/icons-material'
+import { Add as AddIcon, Delete as DeleteIcon, Edit as EditIcon, CheckCircle as CheckCircleIcon, Error as ErrorIcon } from '@mui/icons-material'
 import { portfolioAPI } from '../services/api'
+import api from '../services/api'
 
 function PortfolioList() {
   const navigate = useNavigate()
@@ -16,6 +17,7 @@ function PortfolioList() {
   const [error, setError] = useState('')
   const [dialogError, setDialogError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [backendStatus, setBackendStatus] = useState('checking') // 'checking', 'connected', 'disconnected'
   const [formData, setFormData] = useState({
     name: '',
     analysis_start_date: '',
@@ -28,8 +30,21 @@ function PortfolioList() {
   })
 
   useEffect(() => {
+    checkBackendHealth()
     fetchPortfolios()
   }, [])
+
+  const checkBackendHealth = async () => {
+    try {
+      await api.get('/health')
+      setBackendStatus('connected')
+      console.log('Backend health check: OK')
+    } catch (error) {
+      setBackendStatus('disconnected')
+      console.error('Backend health check failed:', error)
+      setError('Backend server is not responding. Please start the backend server on port 5000.')
+    }
+  }
 
   const fetchPortfolios = async () => {
     try {
@@ -101,19 +116,38 @@ function PortfolioList() {
     }
 
     setLoading(true)
+    console.log('Submitting portfolio with data:', formData)
     try {
       if (editingPortfolio) {
+        console.log('Updating portfolio:', editingPortfolio.id)
         await portfolioAPI.update(editingPortfolio.id, formData)
         fetchPortfolios()
         handleCloseDialog()
       } else {
+        console.log('Creating new portfolio...')
+        console.log('API endpoint: POST http://localhost:5000/api/portfolios')
         const response = await portfolioAPI.create(formData)
+        console.log('Portfolio created successfully:', response.data)
         handleCloseDialog()
         // Navigate to setup page for new portfolios
         navigate(`/portfolios/${response.data.id}/setup`)
       }
     } catch (error) {
-      const errorMessage = error.response?.data?.error || 'Failed to save portfolio'
+      console.error('Full error object:', error)
+      console.error('Error response:', error.response)
+      console.error('Error message:', error.message)
+      console.error('Error code:', error.code)
+
+      let errorMessage = 'Failed to save portfolio'
+
+      if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
+        errorMessage = 'Cannot connect to backend server. Please ensure the backend is running on http://localhost:5000'
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+
       setDialogError(errorMessage)
       console.error('Error saving portfolio:', error)
     } finally {
@@ -141,26 +175,52 @@ function PortfolioList() {
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-        <Typography variant="h4">Portfolios</Typography>
+        <Box>
+          <Typography variant="h4">Portfolios</Typography>
+          <Box sx={{ mt: 1 }}>
+            {backendStatus === 'checking' && (
+              <Chip label="Checking backend..." size="small" />
+            )}
+            {backendStatus === 'connected' && (
+              <Chip
+                icon={<CheckCircleIcon />}
+                label="Backend Connected"
+                color="success"
+                size="small"
+              />
+            )}
+            {backendStatus === 'disconnected' && (
+              <Chip
+                icon={<ErrorIcon />}
+                label="Backend Disconnected"
+                color="error"
+                size="small"
+                onClick={checkBackendHealth}
+              />
+            )}
+          </Box>
+        </Box>
         <Box>
           <Button
             variant="contained"
             startIcon={<AddIcon />}
             onClick={() => handleOpenDialog()}
             sx={{ mr: 1 }}
+            disabled={backendStatus === 'disconnected'}
           >
             New Portfolio
           </Button>
           <Button
             variant="outlined"
             onClick={() => navigate('/upload')}
+            disabled={backendStatus === 'disconnected'}
           >
             Upload Excel
           </Button>
         </Box>
       </Box>
 
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}
 
       <Grid container spacing={3}>
         {portfolios.map((portfolio) => (
