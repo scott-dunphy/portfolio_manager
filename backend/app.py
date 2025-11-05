@@ -11,6 +11,9 @@ def create_app():
     app.config['UPLOAD_FOLDER'] = 'uploads'
     app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
+    # Disable strict slashes to allow both /api/portfolios and /api/portfolios/
+    app.url_map.strict_slashes = False
+
     # Ensure upload folder exists
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
