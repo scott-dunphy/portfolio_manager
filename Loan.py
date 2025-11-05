@@ -2,10 +2,10 @@ import pandas as pd
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 from calendar import monthrange
-from collections import OrderedDict
 from typing import Optional
 import logging
 from portfolio_manager.LoanValuation import LoanValuation
+from portfolio_manager.date_utils import ensure_end_of_month
 
 
 class Loan:
@@ -46,9 +46,9 @@ class Loan:
         self.property_id = str(property_id) if property_id else None
         self.loan_amount = loan_amount
         self.rate = rate
-        self.fund_date = self.get_end_of_month(fund_date)
+        self.fund_date = ensure_end_of_month(fund_date)
         self.fund_date_actual = fund_date
-        self.maturity_date = self.get_end_of_month(maturity_date)
+        self.maturity_date = ensure_end_of_month(maturity_date)
         self.payment_type = payment_type
         self.interest_only_periods = interest_only_periods
         self.fixed_floating = fixed_floating
@@ -59,30 +59,14 @@ class Loan:
         self.loan_draws = self.initialize_monthly_activity()
         self.loan_paydowns = self.initialize_monthly_activity()
         self.commitment = commitment or None
-        self.foreclosure_date = self.get_end_of_month(foreclosure_date) if foreclosure_date else None
+        self.foreclosure_date = ensure_end_of_month(foreclosure_date) if foreclosure_date else None
         self.calculate_unfunded()
 
         # Safely handle prepayment_date
         if prepayment_date is not None and not pd.isna(prepayment_date):
-            self.prepayment_date = self.get_end_of_month(prepayment_date)
+            self.prepayment_date = ensure_end_of_month(prepayment_date)
         else:
             self.prepayment_date = None
-
-    def get_end_of_month(self, input_date: date) -> Optional[date]:
-        if pd.isna(input_date):  # Handle NaN or NaT
-            return None
-
-        # Convert to date object if needed
-        if isinstance(input_date, pd.Timestamp):
-            input_date = input_date.date()
-        elif isinstance(input_date, datetime):
-            input_date = input_date.date()
-        elif not isinstance(input_date, date):
-            raise ValueError(f"Invalid date format: {input_date}")
-
-        # Ensure the date is the last day of the month
-        last_day = monthrange(input_date.year, input_date.month)[1]
-        return input_date.replace(day=last_day)
 
     def get_prior_month(self, input_date: date) -> date:
         """Returns the last day of the prior month."""
@@ -95,11 +79,11 @@ class Loan:
     def initialize_unfunded_schedule(self):
         """Create an initial unfunded schedule based on the commitment."""
         if not self.commitment:
-            self.unfunded = OrderedDict({month: 0 for month in self.monthly_dates})
+            self.unfunded = {month: 0 for month in self.monthly_dates}
             return
 
         # Initialize with full commitment at the start
-        unfunded = OrderedDict()
+        unfunded = {}
         for month in self.monthly_dates:
             if month < self.fund_date:
                 unfunded[month] = 0  # No commitment before funding date
@@ -163,13 +147,11 @@ class Loan:
             return loan_balance * (monthly_rate * (1 + monthly_rate) ** total_payments) / (
                     (1 + monthly_rate) ** total_payments - 1)
 
-    def initialize_monthly_activity(self) -> OrderedDict:
-        return OrderedDict({
-            month: 0 for month in self.monthly_dates
-        })
+    def initialize_monthly_activity(self) -> dict:
+        return {month: 0 for month in self.monthly_dates}
 
     def add_loan_draw(self, draw: float, draw_date: date):
-        draw_date = self.get_end_of_month(draw_date)
+        draw_date = ensure_end_of_month(draw_date)
         if self.get_commitment():
             prior_month = self.get_prior_month(draw_date)
             allowable_draw = self.unfunded.get(prior_month)
@@ -188,7 +170,7 @@ class Loan:
         return 0
 
     def add_loan_paydown(self, paydown: float, paydown_date: date):
-        paydown_date = self.get_end_of_month(paydown_date)
+        paydown_date = ensure_end_of_month(paydown_date)
         self.generate_loan_schedule()
         if paydown_date not in self.schedule:
             self.logger.warning(f"Paydown date {paydown_date} is not in the loan schedule.")
@@ -242,16 +224,16 @@ class Loan:
     def get_loan_paydown(self, paydown_date: date):
         return self.loan_paydowns.get(paydown_date, 0)
 
-    def initialize_loan_schedule(self) -> OrderedDict:
-        """Initialize the loan schedule as an ordered dictionary."""
+    def initialize_loan_schedule(self) -> dict:
+        """Initialize the loan schedule as a dictionary."""
         self.monthly_dates = [
-            self.get_end_of_month(self.fund_date + relativedelta(months=i))
+            ensure_end_of_month(self.fund_date + relativedelta(months=i))
             for i in range(
                 (self.maturity_date.year - self.fund_date.year) * 12 +
                 self.maturity_date.month - self.fund_date.month + 1
             )
         ]
-        return OrderedDict({
+        return {
             month: {
                 'beginning_balance': 0,
                 'loan_draw': 0,
@@ -261,14 +243,14 @@ class Loan:
                 'ending_balance': 0,
                 'encumbered': 1
             } for month in self.monthly_dates
-        })
+        }
 
     def get_scheduled_principal_payment(self, period, amortizing_payment, interest_payment):
         if period <= self.interest_only_periods:
             return 0
         return amortizing_payment - interest_payment
 
-    def generate_loan_schedule(self) -> OrderedDict:
+    def generate_loan_schedule(self) -> dict:
         prior_key = self.fund_date
         prepayment_done = False
 
@@ -388,7 +370,7 @@ class Loan:
         return df
 
     def calculate_loan_market_value(self, as_of_date: date, discount_rate: Optional[float] = None):
-        as_of_date = self.get_end_of_month(as_of_date)
+        as_of_date = ensure_end_of_month(as_of_date)
         if discount_rate is None:
             discount_rate = self.rate
 
@@ -428,7 +410,6 @@ class Loan:
         return market_value
 
     def value_loan(self, as_of_date, treasury_rates: dict, chatham_style=True):
-        print(self.market_rate)
         valuer = LoanValuation(self.fund_date_actual, self.rate, treasury_rates)
         loan_schedule = self.generate_loan_schedule_df()
         max_date = loan_schedule['date'].max()
