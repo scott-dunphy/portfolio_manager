@@ -1,11 +1,50 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  Box, Typography, Paper, Grid, Tabs, Tab, Button,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
+  Alert,
+  Box,
+  Button,
+  Divider,
+  FormControlLabel,
+  Grid,
+  IconButton,
+  MenuItem,
+  Switch,
+  TextField,
+  Paper,
+  Tab,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Tabs,
+  Typography
 } from '@mui/material'
 import { ArrowBack as ArrowBackIcon } from '@mui/icons-material'
-import { portfolioAPI, propertyAPI, loanAPI, preferredEquityAPI } from '../services/api'
+import DownloadIcon from '@mui/icons-material/Download'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown'
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp'
+import Collapse from '@mui/material/Collapse'
+import {
+  portfolioAPI,
+  propertyAPI,
+  loanAPI,
+  preferredEquityAPI,
+  cashFlowAPI,
+  propertyOwnershipAPI
+} from '../services/api'
+import {
+  formatCurrencyDisplay,
+  formatCurrencyInputValue,
+  normalizeCurrencyInput,
+  sanitizeCurrencyInput
+} from '../utils/numberFormat'
 
 function PortfolioDetail() {
   const { id } = useParams()
@@ -14,11 +53,45 @@ function PortfolioDetail() {
   const [properties, setProperties] = useState([])
   const [loans, setLoans] = useState([])
   const [preferredEquities, setPreferredEquities] = useState([])
+  const [cashFlows, setCashFlows] = useState([])
+  const [cashFlowsLoading, setCashFlowsLoading] = useState(false)
+  const [cashFlowsLoaded, setCashFlowsLoaded] = useState(false)
   const [tab, setTab] = useState(0)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [ownershipEvents, setOwnershipEvents] = useState({})
+  const [ownershipEventForms, setOwnershipEventForms] = useState({})
+  const [applyOwnership, setApplyOwnership] = useState(false)
+  const [manualCashFlowForms, setManualCashFlowForms] = useState({})
+  const [manualCashFlowFocus, setManualCashFlowFocus] = useState({})
+  const [propertyCashFlowExpanded, setPropertyCashFlowExpanded] = useState({})
+  const [propertyFlowState, setPropertyFlowState] = useState({})
+  const [loanFlowState, setLoanFlowState] = useState({})
+  const [loanAccordionExpanded, setLoanAccordionExpanded] = useState({})
+  const [downloadingReport, setDownloadingReport] = useState(false)
+  const [manualFlowForm, setManualFlowForm] = useState({
+    date: '',
+    amount: '',
+    type: 'capital_call',
+    description: ''
+  })
+  const manualFlowOptions = [
+    { value: 'capital_call', label: 'Capital Call (inflow)' },
+    { value: 'distribution', label: 'Distribution (outflow)' },
+    { value: 'redemption_payment', label: 'Redemption Payment (outflow)' }
+  ]
 
   useEffect(() => {
     fetchPortfolioData()
+    setPropertyFlowState({})
+    setManualCashFlowForms({})
   }, [id])
+
+  useEffect(() => {
+    if (tab === 3 && !cashFlowsLoaded && !cashFlowsLoading) {
+      loadPortfolioCashFlows()
+    }
+  }, [tab, cashFlowsLoaded, cashFlowsLoading])
 
   const fetchPortfolioData = async () => {
     try {
@@ -29,15 +102,918 @@ function PortfolioDetail() {
         preferredEquityAPI.getAll(id)
       ])
       setPortfolio(portfolioRes.data)
-      setProperties(propertiesRes.data)
+      const propertiesData = propertiesRes.data || []
+      setProperties(propertiesData)
       setLoans(loansRes.data)
       setPreferredEquities(prefEquityRes.data)
+      setCashFlows([])
+      setCashFlowsLoaded(false)
+
+      const eventsState = {}
+      propertiesData.forEach((property) => {
+        eventsState[property.id] = {
+          data: property.ownership_events || [],
+          loading: false,
+          error: ''
+        }
+      })
+      setOwnershipEvents(eventsState)
+      setOwnershipEventForms((prev) => {
+        const updated = { ...prev }
+        propertiesData.forEach((property) => {
+          if (!updated[property.id]) {
+            updated[property.id] = {
+              event_date: property.purchase_date || new Date().toISOString().split('T')[0],
+              ownership_percent: property.ownership_percent ?? 1,
+              note: ''
+            }
+          }
+        })
+        return updated
+      })
     } catch (error) {
       console.error('Error fetching portfolio data:', error)
+      setError(error.response?.data?.error || error.message || 'Failed to load portfolio.')
+      setPortfolio(null)
     }
   }
 
-  if (!portfolio) return <Typography>Loading...</Typography>
+  const handleDeleteProperty = async (propertyId) => {
+    if (!window.confirm('Delete this property? This will remove related loans.')) {
+      return
+    }
+    try {
+      await propertyAPI.delete(propertyId)
+      setSuccess('Property deleted.')
+      setError('')
+      await fetchPortfolioData()
+    } catch (err) {
+      setError('Failed to delete property: ' + (err.response?.data?.error || err.message))
+      setSuccess('')
+    }
+  }
+
+  const handleDeleteLoan = async (loanId) => {
+    if (!window.confirm('Delete this loan?')) {
+      return
+    }
+    try {
+      await loanAPI.delete(loanId)
+      setSuccess('Loan deleted.')
+      setError('')
+      await fetchPortfolioData()
+    } catch (err) {
+      setError('Failed to delete loan: ' + (err.response?.data?.error || err.message))
+      setSuccess('')
+    }
+  }
+
+  const handleDeletePreferredEquity = async (prefId) => {
+    if (!window.confirm('Delete this preferred equity investment?')) {
+      return
+    }
+    try {
+      await preferredEquityAPI.delete(prefId)
+      setSuccess('Preferred equity deleted.')
+      setError('')
+      await fetchPortfolioData()
+    } catch (err) {
+      setError('Failed to delete preferred equity: ' + (err.response?.data?.error || err.message))
+      setSuccess('')
+    }
+  }
+
+  const propertyMap = useMemo(
+    () => new Map(properties.map((property) => [property.id, property])),
+    [properties]
+  )
+  const loanMap = useMemo(
+    () => new Map(loans.map((loan) => [loan.id, loan])),
+    [loans]
+  )
+  const cashFlowTypes = useMemo(() => {
+    const types = new Set()
+    let hasUncategorized = false
+    cashFlows.forEach((cf) => {
+      if (cf.cash_flow_type) {
+        types.add(cf.cash_flow_type)
+      } else {
+        hasUncategorized = true
+      }
+    })
+    if (hasUncategorized) {
+      types.add('Uncategorized')
+    }
+    return Array.from(types).sort()
+  }, [cashFlows])
+  const [dateExpanded, setDateExpanded] = useState({})
+  const [propertyExpanded, setPropertyExpanded] = useState({})
+  const toggleDateRow = (dateKey) => {
+    setDateExpanded((prev) => ({
+      ...prev,
+      [dateKey]: !prev[dateKey]
+    }))
+  }
+  const togglePropertyRow = (key) => {
+    setPropertyExpanded((prev) => ({
+      ...prev,
+      [key]: !prev[key]
+    }))
+  }
+
+  const getOwnershipPercentForDate = useMemo(() => {
+    const cache = new Map()
+
+    return (propertyId, isoDate) => {
+      if (!propertyId) return 1
+
+      const cacheKey = `${propertyId}|${isoDate || 'all'}|${applyOwnership}`
+      if (cache.has(cacheKey)) {
+        return cache.get(cacheKey)
+      }
+
+      let percent = 1
+      try {
+        const events =
+          ownershipEvents[propertyId]?.data ||
+          propertyMap.get(propertyId)?.ownership_events ||
+          []
+
+        if (!events.length) {
+          percent = propertyMap.get(propertyId)?.ownership_percent ?? 1
+        } else {
+          const targetTime = isoDate ? new Date(isoDate).getTime() : Number.POSITIVE_INFINITY
+          percent = events[0]?.ownership_percent ?? 1
+          for (const event of events) {
+            if (!event?.event_date) continue
+            const eventTime = new Date(event.event_date).getTime()
+            if (eventTime <= targetTime) {
+              percent = event.ownership_percent ?? percent
+            } else {
+              break
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to derive ownership percent', err)
+        percent = 1
+      }
+
+      if (typeof percent !== 'number' || !Number.isFinite(percent)) {
+        percent = 1
+      }
+
+      cache.set(cacheKey, percent)
+      return percent
+    }
+  }, [ownershipEvents, propertyMap, applyOwnership])
+
+  const handleManualFlowInputChange = (e) => {
+    const raw = e.target.value.replace(/,/g, '')
+    if (/^\d*$/.test(raw)) {
+      setManualFlowForm((prev) => ({
+        ...prev,
+        amount: raw
+      }))
+    }
+  }
+
+  const handleManualFlowAmountBlur = () => {
+    setManualFlowForm((prev) => ({
+      ...prev,
+      amount: formatCurrencyInputValue(prev.amount)
+    }))
+  }
+
+  const handleManualFlowFieldChange = (field, value) => {
+    setManualFlowForm((prev) => ({
+      ...prev,
+      [field]: value
+    }))
+  }
+
+  const handleManualFlowSubmit = async (e) => {
+    e.preventDefault()
+    if (!manualFlowForm.date) {
+      setError('Please select a date for the cash flow.')
+      return
+    }
+    const normalizedAmount = normalizeCurrencyInput(manualFlowForm.amount)
+    const amountValue = parseFloat(normalizedAmount)
+    if (!Number.isFinite(amountValue)) {
+      setError('Please enter a valid amount.')
+      return
+    }
+
+    let signedAmount = Math.abs(amountValue)
+    if (manualFlowForm.type === 'distribution' || manualFlowForm.type === 'redemption_payment') {
+      signedAmount = -signedAmount
+    }
+
+    try {
+      await cashFlowAPI.create({
+        portfolio_id: id,
+        property_id: null,
+        loan_id: null,
+        date: manualFlowForm.date,
+        cash_flow_type: manualFlowForm.type,
+        amount: signedAmount,
+        description: manualFlowForm.description
+      })
+      setSuccess('Cash flow recorded.')
+      setError('')
+      setManualFlowForm({
+        date: '',
+        amount: '',
+        type: manualFlowForm.type,
+        description: ''
+      })
+      await fetchPortfolioData()
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to save cash flow.')
+    }
+  }
+
+  const manualFocusKey = (propertyId, index, field) => `${propertyId}-${index}-${field}`
+
+  const getManualState = (propertyId) =>
+    manualCashFlowForms[propertyId] || { rows: [], loading: false, error: '', loaded: false }
+  const getManualRows = (propertyId) => getManualState(propertyId).rows
+
+  const handleManualRowChange = (propertyId, index, field, value) => {
+    setManualCashFlowForms((prev) => {
+      const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
+      const rows = [...prevState.rows]
+      const existing = rows[index] || {
+        year: '',
+        frequency: 'annual',
+        month: '',
+        annual_noi: '',
+        annual_capex: ''
+      }
+      const updatedRow = { ...existing }
+
+      if (field === 'year') {
+        updatedRow.year = value.replace(/[^0-9]/g, '')
+      } else if (field === 'frequency') {
+        updatedRow.frequency = value
+        if (value === 'monthly' && !updatedRow.month) {
+          updatedRow.month = '1'
+        }
+        if (value !== 'monthly') {
+          updatedRow.month = ''
+        }
+      } else if (field === 'month') {
+        const digits = value.replace(/[^0-9]/g, '')
+        if (digits === '') {
+          updatedRow.month = ''
+        } else {
+          let monthValue = Number(digits)
+          if (Number.isNaN(monthValue)) {
+            updatedRow.month = ''
+          } else {
+            monthValue = Math.max(1, Math.min(12, monthValue))
+            updatedRow.month = String(monthValue)
+          }
+        }
+      } else if (field === 'annual_noi' || field === 'annual_capex') {
+        updatedRow[field] = sanitizeCurrencyInput(value)
+      } else {
+        updatedRow[field] = value
+      }
+
+      rows[index] = updatedRow
+      return {
+        ...prev,
+        [propertyId]: { ...prevState, rows, loaded: true }
+      }
+    })
+  }
+
+  const handleManualFieldFocus = (propertyId, index, field) => {
+    setManualCashFlowFocus((prev) => ({
+      ...prev,
+      [manualFocusKey(propertyId, index, field)]: true
+    }))
+  }
+
+  const handleManualFieldBlur = (propertyId, index, field) => {
+    const key = manualFocusKey(propertyId, index, field)
+    setManualCashFlowFocus((prev) => {
+      const updated = { ...prev }
+      delete updated[key]
+      return updated
+    })
+    if (field === 'annual_noi' || field === 'annual_capex') {
+      setManualCashFlowForms((prev) => {
+        const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
+        const rows = [...prevState.rows]
+        if (!rows[index]) return prev
+        const normalized = normalizeCurrencyInput(rows[index][field])
+        rows[index] = { ...rows[index], [field]: normalized }
+        return {
+          ...prev,
+          [propertyId]: { ...prevState, rows }
+        }
+      })
+    }
+  }
+
+  const displayManualValue = (propertyId, index, field, value) => {
+    const key = manualFocusKey(propertyId, index, field)
+    if (field === 'year' || field === 'month' || field === 'frequency') {
+      return value
+    }
+    return manualCashFlowFocus[key] ? value : formatCurrencyInputValue(value)
+  }
+
+  const handleManualAddRow = (propertyId) => {
+    const manualState = getManualState(propertyId)
+    if (!manualState.loaded) {
+      if (!manualState.loading) {
+        loadManualCashFlows(propertyId)
+      }
+      return
+    }
+    setManualCashFlowForms((prev) => {
+      const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
+      const rows = [...prevState.rows]
+      const lastYear = rows.length ? rows[rows.length - 1].year : ''
+      const nextYear = lastYear ? String(Number(lastYear) + 1) : ''
+      rows.push({
+        year: nextYear,
+        frequency: 'annual',
+        month: '',
+        annual_noi: '',
+        annual_capex: ''
+      })
+      return {
+        ...prev,
+        [propertyId]: { ...prevState, rows, loaded: true }
+      }
+    })
+  }
+
+  const handleManualRemoveRow = (propertyId, index) => {
+    const manualState = getManualState(propertyId)
+    if (!manualState.loaded) {
+      if (!manualState.loading) {
+        loadManualCashFlows(propertyId)
+      }
+      return
+    }
+    setManualCashFlowForms((prev) => {
+      const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
+      const rows = [...prevState.rows]
+      rows.splice(index, 1)
+      return {
+        ...prev,
+        [propertyId]: { ...prevState, rows, loaded: true }
+      }
+    })
+  }
+
+  const handleManualPrefillRows = (propertyId, property) => {
+    const manualState = getManualState(propertyId)
+    if (!manualState.loaded) {
+      if (!manualState.loading) {
+        loadManualCashFlows(propertyId)
+      }
+      return
+    }
+    if (!portfolio) return
+    const fallbackYear = property.purchase_date
+      ? new Date(property.purchase_date).getFullYear()
+      : new Date().getFullYear()
+    const startYear = portfolio.analysis_start_date
+      ? new Date(portfolio.analysis_start_date).getFullYear()
+      : fallbackYear
+    const endYear = portfolio.analysis_end_date
+      ? new Date(portfolio.analysis_end_date).getFullYear()
+      : startYear + 4
+    const existing = getManualRows(propertyId)
+    const rows = []
+    for (let year = startYear; year <= endYear; year += 1) {
+      const match = existing.find((row) => Number(row.year) === year)
+      rows.push({
+        year: String(year),
+        frequency: match?.frequency || 'annual',
+        month: match?.month || '',
+        annual_noi: match?.annual_noi || '',
+        annual_capex: match?.annual_capex || ''
+      })
+    }
+    setManualCashFlowForms((prev) => ({
+      ...prev,
+      [propertyId]: { rows, loading: false, error: '', loaded: true }
+    }))
+  }
+
+  const handleManualToggle = async (propertyId, enabled) => {
+    try {
+      await propertyAPI.update(propertyId, { use_manual_noi_capex: enabled })
+      setSuccess(enabled ? 'Manual NOI & Capex enabled.' : 'Manual NOI & Capex disabled.')
+      setError('')
+      setProperties((prev) =>
+        prev.map((property) =>
+          property.id === propertyId ? { ...property, use_manual_noi_capex: enabled } : property
+        )
+      )
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to update manual mode.')
+      setSuccess('')
+    }
+  }
+
+  const handleManualSave = async (propertyId, property) => {
+    const manualState = getManualState(propertyId)
+    if (!manualState.loaded) {
+      if (!manualState.loading) {
+        loadManualCashFlows(propertyId)
+      }
+      setError('Manual entries are still loading. Please try again once they finish loading.')
+      return
+    }
+
+    const rows = manualState.rows
+    const entries = []
+
+    for (const row of rows) {
+      if (!row.year) continue
+      const freq = row.frequency || 'annual'
+      if (freq === 'monthly' && !row.month) {
+        setError('Monthly manual entries require a month (1-12).')
+        return
+      }
+      const normalizedNoi = normalizeCurrencyInput(row.annual_noi)
+      const normalizedCapex = normalizeCurrencyInput(row.annual_capex)
+      entries.push({
+        year: Number(row.year),
+        month: freq === 'monthly' ? Number(row.month) : null,
+        annual_noi: normalizedNoi === '' ? null : Number(normalizedNoi),
+        annual_capex: normalizedCapex === '' ? null : Number(normalizedCapex)
+      })
+    }
+
+    try {
+      await propertyAPI.saveManualCashFlows(propertyId, {
+        entries,
+        use_manual_noi_capex: property.use_manual_noi_capex
+      })
+      setSuccess('Manual NOI & Capex saved.')
+      setError('')
+      await loadManualCashFlows(propertyId)
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to save manual cash flows.')
+      setSuccess('')
+    }
+  }
+
+  const loadManualCashFlows = async (propertyId) => {
+    setManualCashFlowForms((prev) => {
+      const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
+      return {
+        ...prev,
+        [propertyId]: { ...prevState, loading: true, error: '' }
+      }
+    })
+    try {
+      const response = await propertyAPI.getManualCashFlows(propertyId)
+      const rows = (response.data || []).map((entry) => ({
+        year: entry.year != null ? String(entry.year) : '',
+        month: entry.month != null ? String(entry.month) : '',
+        frequency: entry.month ? 'monthly' : 'annual',
+        annual_noi: entry.annual_noi != null ? String(Math.round(entry.annual_noi)) : '',
+        annual_capex: entry.annual_capex != null ? String(Math.round(entry.annual_capex)) : ''
+      }))
+      setManualCashFlowForms((prev) => ({
+        ...prev,
+        [propertyId]: { rows, loading: false, error: '', loaded: true }
+      }))
+    } catch (err) {
+      setManualCashFlowForms((prev) => {
+        const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
+        return {
+          ...prev,
+          [propertyId]: {
+            ...prevState,
+            loading: false,
+            error: err.response?.data?.error || err.message || 'Failed to load manual entries'
+          }
+        }
+      })
+    }
+  }
+
+  const loadPropertyCashFlows = async (propertyId) => {
+    setPropertyFlowState((prev) => ({
+      ...prev,
+      [propertyId]: {
+        ...(prev[propertyId] || {}),
+        loading: true,
+        error: '',
+        data: prev[propertyId]?.data || []
+      }
+    }))
+    try {
+      const response = await cashFlowAPI.getAll({ propertyId })
+      setPropertyFlowState((prev) => ({
+        ...prev,
+        [propertyId]: {
+          loading: false,
+          error: '',
+          data: response.data || []
+        }
+      }))
+    } catch (err) {
+      setPropertyFlowState((prev) => ({
+        ...prev,
+        [propertyId]: {
+          ...(prev[propertyId] || {}),
+          loading: false,
+          error: err.response?.data?.error || err.message || 'Failed to load cash flows',
+          data: prev[propertyId]?.data || []
+        }
+      }))
+    }
+  }
+
+  const loadPortfolioCashFlows = async () => {
+    setCashFlowsLoading(true)
+    setError('')
+    try {
+      const response = await cashFlowAPI.getAll({ portfolioId: id })
+      setCashFlows(response.data || [])
+      setCashFlowsLoaded(true)
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to load portfolio cash flows.')
+    } finally {
+      setCashFlowsLoading(false)
+    }
+  }
+
+  const handleDownloadCashFlowReport = async () => {
+    setDownloadingReport(true)
+    try {
+      const response = await cashFlowAPI.downloadReport(id)
+      const blobUrl = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.setAttribute('download', `portfolio_${id}_cash_flows.xlsx`)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(blobUrl)
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to download cash flows.')
+    } finally {
+      setDownloadingReport(false)
+    }
+  }
+
+  const loadLoanCashFlows = async (loanId) => {
+    setLoanFlowState((prev) => ({
+      ...prev,
+      [loanId]: {
+        ...(prev[loanId] || {}),
+        loading: true,
+        error: '',
+        data: prev[loanId]?.data || []
+      }
+    }))
+
+    try {
+      const response = await cashFlowAPI.getAll({ loanId })
+      setLoanFlowState((prev) => ({
+        ...prev,
+        [loanId]: {
+          loading: false,
+          error: '',
+          data: response.data || []
+        }
+      }))
+    } catch (err) {
+      setLoanFlowState((prev) => ({
+        ...prev,
+        [loanId]: {
+          ...(prev[loanId] || {}),
+          loading: false,
+          error: err.response?.data?.error || err.message || 'Failed to load loan cash flows',
+          data: prev[loanId]?.data || []
+        }
+      }))
+    }
+  }
+
+  const isPropertyCashFlowOpen = (propertyId) =>
+    propertyCashFlowExpanded[propertyId] ?? false
+
+  const togglePropertyCashFlowSection = (propertyId) => {
+    const nextValue = !(propertyCashFlowExpanded[propertyId] ?? false)
+    setPropertyCashFlowExpanded((prev) => ({
+      ...prev,
+      [propertyId]: nextValue
+    }))
+
+    if (
+      nextValue &&
+      !propertyFlowState[propertyId]?.data &&
+      !propertyFlowState[propertyId]?.loading
+    ) {
+      loadPropertyCashFlows(propertyId)
+    }
+  }
+
+  const aggregatedByDate = useMemo(() => {
+    const byDate = new Map()
+    cashFlows.forEach((cf) => {
+      const amount = cf.amount || 0
+      const ownershipShareRaw =
+        applyOwnership && cf.property_id
+          ? getOwnershipPercentForDate(cf.property_id, cf.date)
+          : 1
+      const ownershipShare =
+        typeof ownershipShareRaw === 'number' && Number.isFinite(ownershipShareRaw)
+          ? ownershipShareRaw
+          : 1
+      const adjustedAmount = amount * ownershipShare
+      const dateKey = cf.date
+      if (!byDate.has(dateKey)) {
+        byDate.set(dateKey, {
+          date: dateKey,
+          total: 0,
+          typeTotals: {},
+          properties: new Map()
+        })
+      }
+      const entry = byDate.get(dateKey)
+      entry.total += adjustedAmount
+      const typeKey = cf.cash_flow_type || 'Uncategorized'
+      entry.typeTotals[typeKey] = (entry.typeTotals[typeKey] || 0) + adjustedAmount
+
+      const propertyKey = cf.property_id ?? '__unassigned__'
+      if (!entry.properties.has(propertyKey)) {
+        entry.properties.set(propertyKey, {
+          propertyId: cf.property_id ?? null,
+          total: 0,
+          typeTotals: {},
+          flows: []
+        })
+      }
+      const propertyEntry = entry.properties.get(propertyKey)
+      propertyEntry.total += adjustedAmount
+      propertyEntry.typeTotals[typeKey] = (propertyEntry.typeTotals[typeKey] || 0) + adjustedAmount
+      propertyEntry.flows.push({ ...cf, adjusted_amount: adjustedAmount })
+    })
+
+    const sorted = Array.from(byDate.values()).sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    )
+
+    const portfolioBeginning = portfolio?.beginning_cash ?? 0
+    let runningBeginning = portfolioBeginning
+
+    return sorted.map((entry) => {
+      const propertiesArray = Array.from(entry.properties.values()).map((propertyEntry) => ({
+        ...propertyEntry,
+        flows: propertyEntry.flows
+          .slice()
+          .sort((a, b) => (a.cash_flow_type || '').localeCompare(b.cash_flow_type || ''))
+      }))
+
+      propertiesArray.sort((a, b) => {
+        const aRecord = propertyMap.get(a.propertyId)
+        const bRecord = propertyMap.get(b.propertyId)
+        const nameA =
+          aRecord?.property_name ||
+          aRecord?.property_id ||
+          (a.propertyId ? `Property #${a.propertyId}` : 'Unassigned')
+        const nameB =
+          bRecord?.property_name ||
+          bRecord?.property_id ||
+          (b.propertyId ? `Property #${b.propertyId}` : 'Unassigned')
+        return nameA.localeCompare(nameB)
+      })
+
+      const entryWithBalances = {
+        ...entry,
+        properties: propertiesArray,
+        beginning_cash: runningBeginning,
+        ending_cash: runningBeginning + entry.total
+      }
+
+      runningBeginning = entryWithBalances.ending_cash
+
+      return entryWithBalances
+    })
+  }, [cashFlows, propertyMap, applyOwnership, ownershipEvents, getOwnershipPercentForDate, portfolio])
+
+  const getLatestOwnershipPercent = (propertyId) => {
+    const events = ownershipEvents[propertyId]?.data
+    if (events && events.length) {
+      return events[events.length - 1].ownership_percent
+    }
+    return undefined
+  }
+
+
+  const ensureOwnershipFormDefaults = (propertyId, property) => {
+    setOwnershipEventForms((prev) => {
+      if (prev[propertyId]) {
+        return prev
+      }
+      const defaultDate =
+        property?.purchase_date ||
+        new Date().toISOString().split('T')[0]
+      return {
+        ...prev,
+        [propertyId]: {
+          event_date: defaultDate,
+          ownership_percent: property?.ownership_percent ?? 1,
+          note: ''
+        }
+      }
+    })
+  }
+
+  const fetchOwnershipEvents = async (propertyId) => {
+    setOwnershipEvents((prev) => ({
+      ...prev,
+      [propertyId]: {
+        ...(prev[propertyId] || {}),
+        loading: true,
+        error: ''
+      }
+    }))
+    try {
+      const response = await propertyOwnershipAPI.getAll(propertyId)
+      const events = response.data || []
+      setOwnershipEvents((prev) => ({
+        ...prev,
+        [propertyId]: {
+          data: events,
+          loading: false,
+          error: ''
+        }
+      }))
+
+      const latestPercent = events.length ? events[events.length - 1].ownership_percent : null
+      setProperties((prev) =>
+        prev.map((property) =>
+          property.id === propertyId
+            ? { ...property, ownership_percent: latestPercent }
+            : property
+        )
+      )
+    } catch (err) {
+      setOwnershipEvents((prev) => ({
+        ...prev,
+        [propertyId]: {
+          ...(prev[propertyId] || {}),
+          loading: false,
+          error: err.response?.data?.error || err.message || 'Failed to load ownership history'
+        }
+      }))
+    }
+  }
+
+  const handlePropertyAccordionChange = (propertyId, property) => (_, expanded) => {
+    if (!expanded) return
+    if (!ownershipEvents[propertyId] || ownershipEvents[propertyId].data.length === 0) {
+      fetchOwnershipEvents(propertyId)
+    }
+    ensureOwnershipFormDefaults(propertyId, property)
+    if (!propertyFlowState[propertyId]?.data && !propertyFlowState[propertyId]?.loading) {
+      loadPropertyCashFlows(propertyId)
+    }
+    const manualState = manualCashFlowForms[propertyId]
+    if (!manualState || (!manualState.loaded && !manualState.loading)) {
+      loadManualCashFlows(propertyId)
+    }
+  }
+
+  const handleLoanAccordionChange = (loanId) => (_, expanded) => {
+    setLoanAccordionExpanded((prev) => ({
+      ...prev,
+      [loanId]: expanded
+    }))
+    if (expanded && !loanFlowState[loanId]?.data && !loanFlowState[loanId]?.loading) {
+      loadLoanCashFlows(loanId)
+    }
+  }
+
+  const handleOwnershipFormChange = (propertyId, field, value) => {
+    setOwnershipEventForms((prev) => ({
+      ...prev,
+      [propertyId]: {
+        ...(prev[propertyId] || { event_date: '', ownership_percent: '', note: '' }),
+        [field]: value
+      }
+    }))
+  }
+
+  const handleAddOwnershipEvent = async (propertyId) => {
+    const form = ownershipEventForms[propertyId]
+    if (!form || !form.event_date || form.ownership_percent === '' || form.ownership_percent === null) {
+      setError('Ownership event requires a date and percentage.')
+      return
+    }
+    const percentValue = parseFloat(form.ownership_percent)
+    if (!Number.isFinite(percentValue)) {
+      setError('Ownership percentage must be a valid number.')
+      return
+    }
+
+    setError('')
+    try {
+      await propertyOwnershipAPI.create(propertyId, {
+        event_date: form.event_date,
+        ownership_percent: percentValue,
+        note: form.note
+      })
+      setSuccess('Ownership event saved.')
+      await fetchOwnershipEvents(propertyId)
+      setOwnershipEventForms((prev) => ({
+        ...prev,
+        [propertyId]: {
+          ...form,
+          ownership_percent: percentValue,
+          note: ''
+        }
+      }))
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to save ownership event.')
+    }
+  }
+
+  const handleDeleteOwnershipEvent = async (propertyId, eventId) => {
+    if (!window.confirm('Delete this ownership event?')) {
+      return
+    }
+    setError('')
+    try {
+      await propertyOwnershipAPI.delete(propertyId, eventId)
+      setSuccess('Ownership event deleted.')
+      await fetchOwnershipEvents(propertyId)
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to delete ownership event.')
+    }
+  }
+
+  const formatCurrency = (value) => {
+    const formatted = formatCurrencyDisplay(value)
+    if (formatted === '—') {
+      return formatted
+    }
+    return `$${formatted}`
+  }
+
+  const formatLoanRateLabel = (loan) => {
+    if (!loan) return '—'
+    if (loan.rate_type === 'floating') {
+      const spread = loan.sofr_spread != null ? (loan.sofr_spread * 100).toFixed(2) : '0.00'
+      return `SOFR + ${spread}%`
+    }
+    if (loan.interest_rate != null) {
+      return `${(loan.interest_rate * 100).toFixed(2)}%`
+    }
+    return '—'
+  }
+  const formatPercent = (value) => {
+    if (value == null || value === '') return '—'
+    return `${(Number(value) * 100).toFixed(2)}%`
+  }
+
+  const renderFloatingRate = (flow) => {
+    const info = flow.floating_rate_data
+    if (!info || (info.sofr_rate == null && info.total_rate == null)) {
+      return '—'
+    }
+    const sofrText = formatPercent(info.sofr_rate)
+    const spreadText =
+      info.spread != null && info.spread !== 0 ? formatPercent(info.spread) : null
+    const totalText =
+      info.total_rate != null ? formatPercent(info.total_rate) : null
+
+    if (spreadText && totalText) {
+      return `${sofrText} + ${spreadText} = ${totalText}`
+    }
+    return sofrText
+  }
+
+  if (!portfolio) {
+    return (
+      <Box sx={{ p: 3 }}>
+        {error ? (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        ) : (
+          <Typography>Loading...</Typography>
+        )}
+      </Box>
+    )
+  }
 
   return (
     <Box>
@@ -49,6 +1025,17 @@ function PortfolioDetail() {
           {portfolio.name}
         </Typography>
       </Box>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
+          {error}
+        </Alert>
+      )}
+      {success && (
+        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess('')}>
+          {success}
+        </Alert>
+      )}
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Grid container spacing={2}>
@@ -62,11 +1049,11 @@ function PortfolioDetail() {
           </Grid>
           <Grid item xs={6} sm={3}>
             <Typography variant="subtitle2" color="text.secondary">Beginning Cash</Typography>
-            <Typography>${portfolio.beginning_cash?.toLocaleString()}</Typography>
+            <Typography>{formatCurrency(portfolio.beginning_cash)}</Typography>
           </Grid>
           <Grid item xs={6} sm={3}>
             <Typography variant="subtitle2" color="text.secondary">Beginning NAV</Typography>
-            <Typography>${portfolio.beginning_nav?.toLocaleString()}</Typography>
+            <Typography>{formatCurrency(portfolio.beginning_nav)}</Typography>
           </Grid>
         </Grid>
       </Paper>
@@ -76,6 +1063,7 @@ function PortfolioDetail() {
           <Tab label={`Properties (${properties.length})`} />
           <Tab label={`Loans (${loans.length})`} />
           <Tab label={`Preferred Equity (${preferredEquities.length})`} />
+          <Tab label={`Cash Flows (${cashFlowsLoaded ? cashFlows.length : '—'})`} />
         </Tabs>
 
         {tab === 0 && (
@@ -83,36 +1071,499 @@ function PortfolioDetail() {
             <Button variant="contained" onClick={() => navigate('/properties/new')} sx={{ mb: 2 }}>
               Add Property
             </Button>
-            <TableContainer>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Property Name</TableCell>
-                    <TableCell>Type</TableCell>
-                    <TableCell>City</TableCell>
-                    <TableCell>State</TableCell>
-                    <TableCell>Purchase Price</TableCell>
-                    <TableCell>Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {properties.map((property) => (
-                    <TableRow key={property.id}>
-                      <TableCell>{property.property_name}</TableCell>
-                      <TableCell>{property.property_type}</TableCell>
-                      <TableCell>{property.city}</TableCell>
-                      <TableCell>{property.state}</TableCell>
-                      <TableCell>${property.purchase_price?.toLocaleString()}</TableCell>
-                      <TableCell>
-                        <Button size="small" onClick={() => navigate(`/properties/${property.id}/edit`)}>
-                          Edit
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+            {properties.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No properties recorded yet.
+              </Typography>
+            ) : (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {properties.map((property) => {
+                  const propertyFlowEntry = propertyFlowState[property.id] || {}
+                  const flowsForProperty = propertyFlowEntry.data || []
+                  const propertyFlowsLoading = propertyFlowEntry.loading
+                  const propertyFlowsError = propertyFlowEntry.error
+                  const manualState = getManualState(property.id)
+                  const manualRows = manualState.rows
+                  return (
+                    <Accordion
+                      key={property.id}
+                      disableGutters
+                      onChange={handlePropertyAccordionChange(property.id, property)}
+                    >
+                      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                        <Box
+                          sx={{
+                            width: '100%',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            flexWrap: 'wrap',
+                            gap: 2,
+                            alignItems: 'center'
+                          }}
+                        >
+                          <Box>
+                            <Typography variant="subtitle1">
+                              {property.property_name || property.property_id || `Property #${property.id}`}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              {property.property_type || 'Type N/A'} · {property.city || 'City N/A'}, {property.state || 'State N/A'}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', gap: 1 }}>
+                            <Button size="small" onClick={() => navigate(`/properties/${property.id}/edit`)}>
+                              Edit
+                            </Button>
+                            <Button
+                              size="small"
+                              color="error"
+                              onClick={() => handleDeleteProperty(property.id)}
+                            >
+                              Delete
+                            </Button>
+                          </Box>
+                        </Box>
+                      </AccordionSummary>
+                      <AccordionDetails>
+                        <Grid container spacing={2} sx={{ mb: 2 }}>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Purchase Price
+                            </Typography>
+                            <Typography>{formatCurrency(property.purchase_price)}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Initial NOI
+                            </Typography>
+                            <Typography>{formatCurrency(property.initial_noi)}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Capex % of NOI
+                            </Typography>
+                            <Typography>{formatPercent(property.capex_percent_of_noi)}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Current Ownership
+                            </Typography>
+                            <Typography>{formatPercent(property.ownership_percent ?? getLatestOwnershipPercent(property.id))}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              NOI Growth
+                            </Typography>
+                            <Typography>
+                              {property.noi_growth_rate != null ? `${(property.noi_growth_rate * 100).toFixed(2)}%` : '—'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Exit Cap Rate
+                            </Typography>
+                            <Typography>
+                              {property.exit_cap_rate != null ? `${(property.exit_cap_rate * 100).toFixed(2)}%` : '—'}
+                            </Typography>
+                          </Grid>
+                        </Grid>
+
+                        <Divider sx={{ my: 2 }} />
+
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            mb: 1
+                          }}
+                        >
+                          <Typography variant="subtitle2">Cash Flows</Typography>
+                          <Button
+                            size="small"
+                            onClick={() => togglePropertyCashFlowSection(property.id)}
+                          >
+                            {isPropertyCashFlowOpen(property.id) ? 'Hide' : 'Show'}
+                          </Button>
+                        </Box>
+                        <Collapse in={isPropertyCashFlowOpen(property.id)} timeout="auto" unmountOnExit>
+                          {propertyFlowsLoading ? (
+                            <Typography variant="body2" color="text.secondary">
+                              Loading cash flows...
+                            </Typography>
+                          ) : propertyFlowsError ? (
+                            <Typography variant="body2" color="error">
+                              {propertyFlowsError}
+                            </Typography>
+                          ) : flowsForProperty.length === 0 ? (
+                            <Typography variant="body2" color="text.secondary">
+                              No cash flows yet for this property.
+                            </Typography>
+                          ) : (
+                            <TableContainer>
+                              <Table size="small">
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell>Date</TableCell>
+                                    <TableCell>Type</TableCell>
+                                    <TableCell align="right">Amount</TableCell>
+                                    <TableCell>Description</TableCell>
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {flowsForProperty.map((cf) => (
+                                    <TableRow key={`${property.id}-${cf.id || cf.date}-${cf.cash_flow_type}`}>
+                                      <TableCell>{cf.date}</TableCell>
+                                      <TableCell>{cf.cash_flow_type || 'Uncategorized'}</TableCell>
+                                      <TableCell align="right">{formatCurrency(cf.amount)}</TableCell>
+                                      <TableCell>{cf.description || '—'}</TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </TableContainer>
+                          )}
+                        </Collapse>
+
+                        <Divider sx={{ my: 2 }} />
+
+                        <Box sx={{ mb: 2 }}>
+                          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                            Manual NOI & Capex
+                          </Typography>
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={!!property.use_manual_noi_capex}
+                                onChange={(e) => handleManualToggle(property.id, e.target.checked)}
+                              />
+                            }
+                            label="Use manual entries"
+                          />
+                          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                            Enter annual totals or specify monthly overrides to replace projected NOI and Capex.
+                          </Typography>
+
+                          {manualState.error && (
+                            <Alert severity="error" sx={{ mb: 1 }}>
+                              {manualState.error}
+                              <Button
+                                size="small"
+                                sx={{ ml: 2 }}
+                                onClick={() => loadManualCashFlows(property.id)}
+                                disabled={manualState.loading}
+                              >
+                                Retry
+                              </Button>
+                            </Alert>
+                          )}
+
+                          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => handleManualPrefillRows(property.id, property)}
+                              disabled={manualState.loading}
+                            >
+                              Prefill Years
+                            </Button>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => handleManualAddRow(property.id)}
+                              disabled={manualState.loading}
+                            >
+                              Add Row
+                            </Button>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => loadManualCashFlows(property.id)}
+                              disabled={manualState.loading}
+                            >
+                              {manualState.loaded ? 'Reload Entries' : 'Load Entries'}
+                            </Button>
+                          </Box>
+
+                          {manualState.loading && !manualState.loaded ? (
+                            <Typography variant="body2" color="text.secondary">
+                              Loading manual entries...
+                            </Typography>
+                          ) : !manualState.loaded ? (
+                            <Typography variant="body2" color="text.secondary">
+                              Click "Load Entries" to fetch manual overrides for this property.
+                            </Typography>
+                          ) : (
+                            <>
+                              {manualState.loading && manualState.loaded && (
+                                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                  Refreshing entries...
+                                </Typography>
+                              )}
+                              <TableContainer>
+                                <Table size="small">
+                                  <TableHead>
+                                    <TableRow>
+                                      <TableCell>Year</TableCell>
+                                      <TableCell>Frequency</TableCell>
+                                      <TableCell>Month</TableCell>
+                                      <TableCell>NOI</TableCell>
+                                      <TableCell>Capex</TableCell>
+                                      <TableCell align="right">Actions</TableCell>
+                                    </TableRow>
+                                  </TableHead>
+                                  <TableBody>
+                                    {manualRows.length === 0 ? (
+                                      <TableRow>
+                                        <TableCell colSpan={6}>
+                                          <Typography variant="body2" color="text.secondary">
+                                            No manual entries yet.
+                                          </Typography>
+                                        </TableCell>
+                                      </TableRow>
+                                    ) : (
+                                      manualRows.map((row, idx) => (
+                                        <TableRow key={`${property.id}-manual-${idx}`}>
+                                          <TableCell width="12%">
+                                            <TextField
+                                              size="small"
+                                              value={row.year || ''}
+                                              onChange={(e) =>
+                                                handleManualRowChange(property.id, idx, 'year', e.target.value)
+                                              }
+                                              placeholder="2026"
+                                            />
+                                          </TableCell>
+                                          <TableCell width="18%">
+                                            <TextField
+                                              select
+                                              size="small"
+                                              value={row.frequency || 'annual'}
+                                              onChange={(e) =>
+                                                handleManualRowChange(property.id, idx, 'frequency', e.target.value)
+                                              }
+                                            >
+                                              <MenuItem value="annual">Annual</MenuItem>
+                                              <MenuItem value="monthly">Monthly</MenuItem>
+                                            </TextField>
+                                          </TableCell>
+                                          <TableCell width="15%">
+                                            <TextField
+                                              select
+                                              size="small"
+                                              value={row.month || ''}
+                                              onChange={(e) =>
+                                                handleManualRowChange(property.id, idx, 'month', e.target.value)
+                                              }
+                                              disabled={(row.frequency || 'annual') !== 'monthly'}
+                                            >
+                                              {[...Array(12)].map((_, monthIdx) => (
+                                                <MenuItem key={monthIdx + 1} value={String(monthIdx + 1)}>
+                                                  {monthIdx + 1}
+                                                </MenuItem>
+                                              ))}
+                                            </TextField>
+                                          </TableCell>
+                                          <TableCell width="22%">
+                                            <TextField
+                                              size="small"
+                                              value={displayManualValue(
+                                                property.id,
+                                                idx,
+                                                'annual_noi',
+                                                row.annual_noi
+                                              )}
+                                              onFocus={() =>
+                                                handleManualFieldFocus(property.id, idx, 'annual_noi')
+                                              }
+                                              onBlur={() =>
+                                                handleManualFieldBlur(property.id, idx, 'annual_noi')
+                                              }
+                                              onChange={(e) =>
+                                                handleManualRowChange(
+                                                  property.id,
+                                                  idx,
+                                                  'annual_noi',
+                                                  e.target.value
+                                                )
+                                              }
+                                              inputMode="numeric"
+                                              placeholder="1,000,000"
+                                            />
+                                          </TableCell>
+                                          <TableCell width="22%">
+                                            <TextField
+                                              size="small"
+                                              value={displayManualValue(
+                                                property.id,
+                                                idx,
+                                                'annual_capex',
+                                                row.annual_capex
+                                              )}
+                                              onFocus={() =>
+                                                handleManualFieldFocus(property.id, idx, 'annual_capex')
+                                              }
+                                              onBlur={() =>
+                                                handleManualFieldBlur(property.id, idx, 'annual_capex')
+                                              }
+                                              onChange={(e) =>
+                                                handleManualRowChange(
+                                                  property.id,
+                                                  idx,
+                                                  'annual_capex',
+                                                  e.target.value
+                                                )
+                                              }
+                                              inputMode="numeric"
+                                              placeholder="100,000"
+                                            />
+                                          </TableCell>
+                                          <TableCell align="right" width="11%">
+                                            <Button
+                                              size="small"
+                                              color="error"
+                                              onClick={() => handleManualRemoveRow(property.id, idx)}
+                                              disabled={manualState.loading}
+                                            >
+                                              Remove
+                                            </Button>
+                                          </TableCell>
+                                        </TableRow>
+                                      ))
+                                    )}
+                                  </TableBody>
+                                </Table>
+                              </TableContainer>
+                              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
+                                <Button
+                                  size="small"
+                                  variant="contained"
+                                  onClick={() => handleManualSave(property.id, property)}
+                                  disabled={manualState.loading}
+                                >
+                                  Save Manual Entries
+                                </Button>
+                              </Box>
+                            </>
+                          )}
+                        </Box>
+
+                        <Divider sx={{ my: 2 }} />
+
+                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                          Ownership History
+                        </Typography>
+                        {ownershipEvents[property.id]?.error && (
+                          <Alert
+                            severity="error"
+                            sx={{ mb: 1 }}
+                            onClose={() =>
+                              setOwnershipEvents((prev) => ({
+                                ...prev,
+                                [property.id]: { ...prev[property.id], error: '' }
+                              }))
+                            }
+                          >
+                            {ownershipEvents[property.id].error}
+                          </Alert>
+                        )}
+                        {ownershipEvents[property.id]?.loading ? (
+                          <Typography variant="body2" color="text.secondary">
+                            Loading ownership history...
+                          </Typography>
+                        ) : ownershipEvents[property.id]?.data?.length ? (
+                          <TableContainer sx={{ mb: 2 }}>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>Date</TableCell>
+                                  <TableCell align="right">Ownership %</TableCell>
+                                  <TableCell>Note</TableCell>
+                                  <TableCell align="right">Actions</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {ownershipEvents[property.id].data.map((event) => (
+                                  <TableRow key={`ownership-${event.id}`}>
+                                    <TableCell>{event.event_date}</TableCell>
+                                    <TableCell align="right">{formatPercent(event.ownership_percent)}</TableCell>
+                                    <TableCell>{event.note || '—'}</TableCell>
+                                    <TableCell align="right">
+                                      <Button
+                                        size="small"
+                                        color="error"
+                                        onClick={() => handleDeleteOwnershipEvent(property.id, event.id)}
+                                      >
+                                        Delete
+                                      </Button>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                            No ownership events recorded yet.
+                          </Typography>
+                        )}
+
+                        <Grid container spacing={2}>
+                          <Grid item xs={12} sm={4}>
+                            <TextField
+                              fullWidth
+                              size="small"
+                              label="Event Date"
+                              type="date"
+                              value={ownershipEventForms[property.id]?.event_date || ''}
+                              onChange={(e) =>
+                                handleOwnershipFormChange(property.id, 'event_date', e.target.value)
+                              }
+                              InputLabelProps={{ shrink: true }}
+                            />
+                          </Grid>
+                          <Grid item xs={12} sm={4}>
+                            <TextField
+                              fullWidth
+                              size="small"
+                              label="Ownership %"
+                              type="number"
+                              value={ownershipEventForms[property.id]?.ownership_percent ?? ''}
+                              onChange={(e) =>
+                                handleOwnershipFormChange(property.id, 'ownership_percent', e.target.value)
+                              }
+                              inputProps={{ step: 0.01, min: 0, max: 1 }}
+                              helperText="Decimal (e.g., 1 = 100%)"
+                            />
+                          </Grid>
+                          <Grid item xs={12} sm={4}>
+                            <TextField
+                              fullWidth
+                              size="small"
+                              label="Note"
+                              value={ownershipEventForms[property.id]?.note || ''}
+                              onChange={(e) =>
+                                handleOwnershipFormChange(property.id, 'note', e.target.value)
+                              }
+                            />
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                              <Button
+                                variant="outlined"
+                                size="small"
+                                onClick={() => handleAddOwnershipEvent(property.id)}
+                              >
+                                Add Ownership Event
+                              </Button>
+                            </Box>
+                          </Grid>
+                        </Grid>
+                      </AccordionDetails>
+                    </Accordion>
+                  )
+                })}
+              </Box>
+            )}
           </Box>
         )}
 
@@ -121,36 +1572,141 @@ function PortfolioDetail() {
             <Button variant="contained" onClick={() => navigate('/loans/new')} sx={{ mb: 2 }}>
               Add Loan
             </Button>
-            <TableContainer>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Loan Name</TableCell>
-                    <TableCell>Principal Amount</TableCell>
-                    <TableCell>Interest Rate</TableCell>
-                    <TableCell>Origination Date</TableCell>
-                    <TableCell>Maturity Date</TableCell>
-                    <TableCell>Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {loans.map((loan) => (
-                    <TableRow key={loan.id}>
-                      <TableCell>{loan.loan_name}</TableCell>
-                      <TableCell>${loan.principal_amount?.toLocaleString()}</TableCell>
-                      <TableCell>{(loan.interest_rate * 100).toFixed(2)}%</TableCell>
-                      <TableCell>{loan.origination_date}</TableCell>
-                      <TableCell>{loan.maturity_date}</TableCell>
-                      <TableCell>
-                        <Button size="small" onClick={() => navigate(`/loans/${loan.id}/edit`)}>
-                          Edit
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+            {loans.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No loans recorded yet.
+              </Typography>
+            ) : (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {loans.map((loan) => {
+                  const propertyForLoan = propertyMap.get(loan.property_id)
+                  const loanFlowEntry = loanFlowState[loan.id] || {
+                    data: [],
+                    loading: false,
+                    error: ''
+                  }
+                  const flowsForLoan = loanFlowEntry.data || []
+                  return (
+                    <Accordion
+                      key={loan.id}
+                      disableGutters
+                      onChange={handleLoanAccordionChange(loan.id)}
+                      expanded={loanAccordionExpanded[loan.id] ?? false}
+                    >
+                      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                        <Box
+                          sx={{
+                            width: '100%',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            flexWrap: 'wrap',
+                            gap: 2,
+                            alignItems: 'center'
+                          }}
+                        >
+                          <Box>
+                            <Typography variant="subtitle1">
+                              {loan.loan_name || loan.loan_id || `Loan #${loan.id}`}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              Principal {formatCurrency(loan.principal_amount)} · Rate {formatLoanRateLabel(loan)}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', gap: 1 }}>
+                            <Button size="small" onClick={() => navigate(`/loans/${loan.id}/edit`)}>
+                              Edit
+                            </Button>
+                            <Button
+                              size="small"
+                              color="error"
+                              onClick={() => handleDeleteLoan(loan.id)}
+                            >
+                              Delete
+                            </Button>
+                          </Box>
+                        </Box>
+                      </AccordionSummary>
+                      <AccordionDetails>
+                        <Grid container spacing={2} sx={{ mb: 2 }}>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Property
+                            </Typography>
+                            <Typography>
+                              {propertyForLoan
+                                ? propertyForLoan.property_name || propertyForLoan.property_id
+                                : '—'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Origination
+                            </Typography>
+                            <Typography>{loan.origination_date || '—'}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Maturity
+                            </Typography>
+                            <Typography>{loan.maturity_date || '—'}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Payment Frequency
+                            </Typography>
+                            <Typography>{loan.payment_frequency || 'monthly'}</Typography>
+                          </Grid>
+                        </Grid>
+
+                        <Divider sx={{ my: 2 }} />
+
+                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                          Cash Flows
+                        </Typography>
+                        {loanFlowEntry.loading && flowsForLoan.length === 0 ? (
+                          <Typography variant="body2" color="text.secondary">
+                            Loading cash flows...
+                          </Typography>
+                        ) : loanFlowEntry.error ? (
+                          <Typography variant="body2" color="error">
+                            {loanFlowEntry.error}
+                          </Typography>
+                        ) : flowsForLoan.length === 0 ? (
+                          <Typography variant="body2" color="text.secondary">
+                            No cash flows yet for this loan.
+                          </Typography>
+                        ) : (
+                          <TableContainer>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>Date</TableCell>
+                                  <TableCell>Type</TableCell>
+                                  <TableCell align="right">SOFR Rate</TableCell>
+                                  <TableCell align="right">Amount</TableCell>
+                                  <TableCell>Description</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {flowsForLoan.map((cf) => (
+                                  <TableRow key={`${loan.id}-${cf.id || cf.date}-${cf.cash_flow_type}`}>
+                                    <TableCell>{cf.date}</TableCell>
+                                    <TableCell>{cf.cash_flow_type || 'Uncategorized'}</TableCell>
+                                    <TableCell align="right">{renderFloatingRate(cf)}</TableCell>
+                                    <TableCell align="right">{formatCurrency(cf.amount)}</TableCell>
+                                    <TableCell>{cf.description || '—'}</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        )}
+                      </AccordionDetails>
+                    </Accordion>
+                  )
+                })}
+              </Box>
+            )}
           </Box>
         )}
 
@@ -164,20 +1720,326 @@ function PortfolioDetail() {
                     <TableCell>Initial Investment</TableCell>
                     <TableCell>Preferred Return</TableCell>
                     <TableCell>Investment Date</TableCell>
+                    <TableCell>Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {preferredEquities.map((pe) => (
                     <TableRow key={pe.id}>
                       <TableCell>{pe.name}</TableCell>
-                      <TableCell>${pe.initial_investment?.toLocaleString()}</TableCell>
-                      <TableCell>{(pe.preferred_return * 100).toFixed(2)}%</TableCell>
+                      <TableCell>{formatCurrency(pe.initial_investment)}</TableCell>
+                      <TableCell>
+                        {pe.preferred_return != null ? `${(pe.preferred_return * 100).toFixed(2)}%` : '—'}
+                      </TableCell>
                       <TableCell>{pe.investment_date}</TableCell>
+                      <TableCell>
+                        <Button
+                          size="small"
+                          color="error"
+                          onClick={() => handleDeletePreferredEquity(pe.id)}
+                        >
+                          Delete
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </TableContainer>
+          </Box>
+        )}
+
+        {tab === 3 && (
+          <Box sx={{ p: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2, gap: 1, flexWrap: 'wrap' }}>
+              <Button
+                variant="outlined"
+                startIcon={<DownloadIcon />}
+                onClick={handleDownloadCashFlowReport}
+                disabled={downloadingReport}
+              >
+                {downloadingReport ? 'Preparing…' : 'Download Excel'}
+              </Button>
+            </Box>
+            <Paper sx={{ p: 2, mb: 3 }} variant="outlined">
+              <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                Add Fund-Level Cash Flow
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Capital Calls are cash inflows. Distributions and Redemption Payments are cash outflows.
+              </Typography>
+              <Box component="form" onSubmit={handleManualFlowSubmit}>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={3}>
+                    <TextField
+                      fullWidth
+                      label="Date"
+                      type="date"
+                      value={manualFlowForm.date}
+                      onChange={(e) => handleManualFlowFieldChange('date', e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                      size="small"
+                      required
+                    />
+                  </Grid>
+                      <Grid item xs={12} sm={3}>
+                        <TextField
+                          fullWidth
+                          label="Amount"
+                          type="text"
+                          inputMode="numeric"
+                          value={manualFlowForm.amount}
+                          onChange={handleManualFlowInputChange}
+                          onBlur={handleManualFlowAmountBlur}
+                          size="small"
+                          inputProps={{ step: 0.01 }}
+                          required
+                        />
+                      </Grid>
+                      <Grid item xs={12} sm={3}>
+                        <TextField
+                          fullWidth
+                          select
+                          label="Type"
+                          value={manualFlowForm.type}
+                          onChange={(e) => handleManualFlowFieldChange('type', e.target.value)}
+                          size="small"
+                    >
+                      {manualFlowOptions.map((option) => (
+                        <MenuItem key={option.value} value={option.value}>
+                          {option.label}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Grid>
+                      <Grid item xs={12} sm={3}>
+                        <TextField
+                          fullWidth
+                          label="Description"
+                          value={manualFlowForm.description}
+                          onChange={(e) => handleManualFlowFieldChange('description', e.target.value)}
+                          size="small"
+                        />
+                  </Grid>
+                  <Grid item xs={12} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <Button type="submit" variant="contained">
+                      Save Cash Flow
+                    </Button>
+                  </Grid>
+                </Grid>
+              </Box>
+            </Paper>
+            {cashFlowsLoading && !cashFlowsLoaded ? (
+              <Typography variant="body2" color="text.secondary">
+                Loading portfolio cash flows...
+              </Typography>
+            ) : aggregatedByDate.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No cash flows recorded yet.
+              </Typography>
+            ) : (
+              <>
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={applyOwnership}
+                        onChange={(e) => setApplyOwnership(e.target.checked)}
+                      />
+                    }
+                    label="Apply ownership share"
+                  />
+                </Box>
+                <TableContainer>
+                  <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell />
+                      <TableCell>Date</TableCell>
+                      <TableCell align="right">Beginning Cash</TableCell>
+                      <TableCell align="right">Total</TableCell>
+                      <TableCell align="right">Ending Cash</TableCell>
+                      {cashFlowTypes.map((type) => (
+                        <TableCell align="right" key={`portfolio-type-${type}`}>
+                          {type}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {aggregatedByDate.map((entry) => {
+                      const dateKey = entry.date
+                      const open = !!dateExpanded[dateKey]
+
+                      return (
+                        <React.Fragment key={dateKey}>
+                          <TableRow>
+                            <TableCell>
+                              <IconButton size="small" onClick={() => toggleDateRow(dateKey)}>
+                                {open ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                              </IconButton>
+                            </TableCell>
+                            <TableCell>{dateKey}</TableCell>
+                            <TableCell align="right">{formatCurrency(entry.beginning_cash)}</TableCell>
+                            <TableCell align="right">{formatCurrency(entry.total)}</TableCell>
+                            <TableCell align="right">{formatCurrency(entry.ending_cash)}</TableCell>
+                            {cashFlowTypes.map((type) => (
+                              <TableCell align="right" key={`${dateKey}-${type}`}>
+                                {formatCurrency(entry.typeTotals[type] || 0)}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          <TableRow>
+                            <TableCell
+                              colSpan={5 + cashFlowTypes.length}
+                              sx={{ py: 0, border: 0 }}
+                            >
+                              <Collapse in={open} timeout="auto" unmountOnExit>
+                                <Box sx={{ m: 2 }}>
+                                  {entry.properties.length === 0 ? (
+                                    <Typography variant="body2" color="text.secondary">
+                                      No property allocations for this date.
+                                    </Typography>
+                                  ) : (
+                                    <Table size="small">
+                                      <TableHead>
+                                        <TableRow>
+                                          <TableCell />
+                                          <TableCell>Property</TableCell>
+                                          <TableCell align="right">Total</TableCell>
+                                          {cashFlowTypes.map((type) => (
+                                            <TableCell align="right" key={`property-header-${type}`}>
+                                              {type}
+                                            </TableCell>
+                                          ))}
+                                        </TableRow>
+                                      </TableHead>
+                                      <TableBody>
+                                        {entry.properties.map((propertyEntry) => {
+                                          const propertyKey = `${dateKey}|${propertyEntry.propertyId ?? 'unassigned'}`
+                                          const propOpen = !!propertyExpanded[propertyKey]
+                                          const propertyRecord = propertyMap.get(propertyEntry.propertyId)
+                                          const label =
+                                            propertyRecord?.property_name ||
+                                            propertyRecord?.property_id ||
+                                            (propertyEntry.propertyId
+                                              ? `Property #${propertyEntry.propertyId}`
+                                              : 'Unassigned')
+
+                                          return (
+                                            <React.Fragment key={propertyKey}>
+                                              <TableRow>
+                                                <TableCell>
+                                                  <IconButton
+                                                    size="small"
+                                                    onClick={() => togglePropertyRow(propertyKey)}
+                                                  >
+                                                    {propOpen ? (
+                                                      <KeyboardArrowUpIcon />
+                                                    ) : (
+                                                      <KeyboardArrowDownIcon />
+                                                    )}
+                                                  </IconButton>
+                                                </TableCell>
+                                                <TableCell>{label}</TableCell>
+                                                <TableCell align="right">
+                                                  {formatCurrency(propertyEntry.total)}
+                                                </TableCell>
+                                                {cashFlowTypes.map((type) => (
+                                                  <TableCell
+                                                    align="right"
+                                                    key={`${propertyKey}-${type}`}
+                                                  >
+                                                    {formatCurrency(propertyEntry.typeTotals[type] || 0)}
+                                                  </TableCell>
+                                                ))}
+                                              </TableRow>
+                                              <TableRow>
+                                                <TableCell
+                                                  colSpan={3 + cashFlowTypes.length}
+                                                  sx={{ py: 0, border: 0 }}
+                                                >
+                                                  <Collapse in={propOpen} timeout="auto" unmountOnExit>
+                                                    <Box sx={{ m: 2 }}>
+                                                      {propertyEntry.flows.length === 0 ? (
+                                                        <Typography
+                                                          variant="body2"
+                                                          color="text.secondary"
+                                                        >
+                                                          No detailed cash flows recorded.
+                                                        </Typography>
+                                                      ) : (
+                                                        <Table size="small">
+                                                          <TableHead>
+                                                            <TableRow>
+                                                              <TableCell>Type</TableCell>
+                                                              <TableCell align="right">Amount</TableCell>
+                                                              <TableCell>Description</TableCell>
+                                                              <TableCell align="right">Loan</TableCell>
+                                                            </TableRow>
+                                                          </TableHead>
+                                                          <TableBody>
+                                                            {propertyEntry.flows.map((flow) => {
+                                                              const loanForFlow =
+                                                                flow.loan_id != null
+                                                                  ? loanMap.get(flow.loan_id)
+                                                                  : null
+                                                              const flowLabel =
+                                                                flow.cash_flow_type || 'Uncategorized'
+                                                              const loanLabel = loanForFlow
+                                                                ? loanForFlow.loan_name ||
+                                                                  loanForFlow.loan_id ||
+                                                                  `Loan #${loanForFlow.id}`
+                                                                : flow.loan_id
+                                                                ? `Loan #${flow.loan_id}`
+                                                                : '—'
+
+                                                              return (
+                                                                <TableRow
+                                                                  key={`${propertyKey}-${flow.id || `${flowLabel}-${flow.amount}`}`}
+                                                                >
+                                                                  <TableCell>{flowLabel}</TableCell>
+                                                                  <TableCell align="right">
+                                                                    {formatCurrency(
+                                                                      applyOwnership
+                                                                        ? flow.adjusted_amount
+                                                                        : flow.amount
+                                                                    )}
+                                                                  </TableCell>
+                                                                  <TableCell>
+                                                                    {flow.description || '—'}
+                                                                  </TableCell>
+                                                                  <TableCell align="right">
+                                                                    {loanLabel}
+                                                                  </TableCell>
+                                                                </TableRow>
+                                                              )
+                                                            })}
+                                                          </TableBody>
+                                                        </Table>
+                                                      )}
+                                                    </Box>
+                                                  </Collapse>
+                                                </TableCell>
+                                              </TableRow>
+                                            </React.Fragment>
+                                          )
+                                        })}
+                                      </TableBody>
+                                    </Table>
+                                  )}
+                                </Box>
+                              </Collapse>
+                            </TableCell>
+                          </TableRow>
+                        </React.Fragment>
+                      )
+                    })}
+                  </TableBody>
+                  </Table>
+                </TableContainer>
+              </>
+            )}
           </Box>
         )}
       </Paper>

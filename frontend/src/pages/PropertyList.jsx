@@ -6,6 +6,7 @@ import {
 } from '@mui/material'
 import { Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon } from '@mui/icons-material'
 import { propertyAPI } from '../services/api'
+import { formatCurrencyDisplay } from '../utils/numberFormat'
 
 function PropertyList() {
   const navigate = useNavigate()
@@ -69,7 +70,7 @@ function PropertyList() {
                 <TableCell>{property.property_type}</TableCell>
                 <TableCell>{property.city}</TableCell>
                 <TableCell>{property.state}</TableCell>
-                <TableCell>${property.purchase_price?.toLocaleString()}</TableCell>
+                <TableCell>{formatCurrency(property.purchase_price)}</TableCell>
                 <TableCell>
                   <IconButton size="small" onClick={() => navigate(`/properties/${property.id}/edit`)}>
                     <EditIcon fontSize="small" />
@@ -88,3 +89,10 @@ function PropertyList() {
 }
 
 export default PropertyList
+  const formatCurrency = (value) => {
+    const formatted = formatCurrencyDisplay(value)
+    if (formatted === '—') {
+      return formatted
+    }
+    return `$${formatted}`
+  }

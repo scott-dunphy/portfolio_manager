@@ -5,7 +5,7 @@ from datetime import datetime
 
 bp = Blueprint('preferred_equities', __name__, url_prefix='/api/preferred-equities')
 
-@bp.route('/', methods=['GET'])
+@bp.route('', methods=['GET'])
 def get_preferred_equities():
     """Get all preferred equities, optionally filtered by portfolio_id"""
     portfolio_id = request.args.get('portfolio_id', type=int)
@@ -23,7 +23,7 @@ def get_preferred_equity(pref_equity_id):
     pref_equity = PreferredEquity.query.get_or_404(pref_equity_id)
     return jsonify(pref_equity.to_dict())
 
-@bp.route('/', methods=['POST'])
+@bp.route('', methods=['POST'])
 def create_preferred_equity():
     """Create a new preferred equity"""
     data = request.get_json()

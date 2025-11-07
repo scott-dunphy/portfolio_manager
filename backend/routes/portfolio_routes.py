@@ -5,7 +5,7 @@ from datetime import datetime
 
 bp = Blueprint('portfolios', __name__, url_prefix='/api/portfolios')
 
-@bp.route('/', methods=['GET'])
+@bp.route('', methods=['GET'])
 def get_portfolios():
     """Get all portfolios"""
     portfolios = Portfolio.query.all()
@@ -22,7 +22,7 @@ def get_portfolio(portfolio_id):
     result['preferred_equities'] = [pe.to_dict() for pe in portfolio.preferred_equities]
     return jsonify(result)
 
-@bp.route('/', methods=['POST'])
+@bp.route('', methods=['POST'])
 def create_portfolio():
     """Create a new portfolio"""
     data = request.get_json()

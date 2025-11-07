@@ -12,6 +12,7 @@ import {
   Check as CheckIcon
 } from '@mui/icons-material'
 import { portfolioAPI, propertyAPI, loanAPI } from '../services/api'
+import { formatCurrencyDisplay, formatCurrencyInputValue, sanitizeCurrencyInput } from '../utils/numberFormat'
 
 function PortfolioSetup() {
   const { portfolioId } = useParams()
@@ -39,7 +40,9 @@ function PortfolioSetup() {
     building_size: '',
     noi_growth_rate: '',
     initial_noi: '',
-    valuation_method: 'growth'
+    valuation_method: 'growth',
+    ownership_percent: 1,
+    capex_percent_of_noi: ''
   })
 
   // Loan form state
@@ -64,6 +67,12 @@ function PortfolioSetup() {
     fetchPortfolio()
     fetchProperties()
   }, [portfolioId])
+
+  useEffect(() => {
+    if (showLoanForm && properties.length > 0 && !selectedPropertyForLoan) {
+      setSelectedPropertyForLoan(properties[0])
+    }
+  }, [showLoanForm, properties, selectedPropertyForLoan])
 
   const fetchPortfolio = async () => {
     try {
@@ -117,7 +126,9 @@ function PortfolioSetup() {
       building_size: '',
       noi_growth_rate: '',
       initial_noi: '',
-      valuation_method: 'growth'
+      valuation_method: 'growth',
+      ownership_percent: 1,
+      capex_percent_of_noi: ''
     })
   }
 
@@ -138,14 +149,57 @@ function PortfolioSetup() {
     })
   }
 
+  const currencyFields = new Set(['purchase_price', 'initial_noi'])
+  const [focusedPropertyCurrencyField, setFocusedPropertyCurrencyField] = useState(null)
+
+  const formatCurrency = (value) => {
+    const formatted = formatCurrencyDisplay(value)
+    if (formatted === '—') {
+      return formatted
+    }
+    return `$${formatted}`
+  }
+
+  const formatLoanRate = (loan) => {
+    if (loan.rate_type === 'floating') {
+      const spread = loan.sofr_spread != null ? (loan.sofr_spread * 100).toFixed(2) : '0.00'
+      return `SOFR + ${spread}%`
+    }
+    if (loan.interest_rate != null) {
+      return `${(parseFloat(loan.interest_rate) * 100).toFixed(2)}%`
+    }
+    return '—'
+  }
+
+  const getPropertyCurrencyValue = (name) => {
+    const raw = propertyFormData[name] ?? ''
+    if (focusedPropertyCurrencyField === name) {
+      return raw
+    }
+    return formatCurrencyInputValue(raw)
+  }
+
   const handlePropertyChange = (e) => {
     const { name, value } = e.target
-    setPropertyFormData(prev => ({ ...prev, [name]: value }))
+    setPropertyFormData(prev => ({
+      ...prev,
+      [name]: currencyFields.has(name) ? sanitizeCurrencyInput(value) : value
+    }))
   }
 
   const handleLoanChange = (e) => {
     const { name, value } = e.target
     setLoanFormData(prev => ({ ...prev, [name]: value }))
+  }
+
+  const handleLoanPropertySelect = (value) => {
+    const propertyId = Number(value)
+    if (Number.isNaN(propertyId)) {
+      setSelectedPropertyForLoan(null)
+      return
+    }
+    const property = properties.find(p => p.id === propertyId) || null
+    setSelectedPropertyForLoan(property)
   }
 
   const handleAddProperty = async (e) => {
@@ -156,7 +210,11 @@ function PortfolioSetup() {
     try {
       await propertyAPI.create({
         ...propertyFormData,
-        portfolio_id: portfolioId
+        portfolio_id: portfolioId,
+        purchase_price: propertyFormData.purchase_price ? Number(propertyFormData.purchase_price) : null,
+        initial_noi: propertyFormData.initial_noi ? Number(propertyFormData.initial_noi) : null,
+        capex_percent_of_noi:
+          propertyFormData.capex_percent_of_noi === '' ? null : Number(propertyFormData.capex_percent_of_noi)
       })
       setSuccess('Property added successfully!')
       resetPropertyForm()
@@ -312,10 +370,26 @@ function PortfolioSetup() {
                   <Grid item xs={12} sm={6}>
                     <TextField
                       fullWidth
+                      label="Ownership %"
+                      name="ownership_percent"
+                      type="number"
+                      value={propertyFormData.ownership_percent}
+                      onChange={handlePropertyChange}
+                      size="small"
+                      inputProps={{ step: 0.01, min: 0, max: 1 }}
+                      helperText="Enter as decimal (e.g., 1 = 100%)"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
                       label="Purchase Price"
                       name="purchase_price"
-                      type="number"
-                      value={propertyFormData.purchase_price}
+                      type="text"
+                      inputMode="numeric"
+                      value={getPropertyCurrencyValue('purchase_price')}
+                      onFocus={() => setFocusedPropertyCurrencyField('purchase_price')}
+                      onBlur={() => setFocusedPropertyCurrencyField(null)}
                       onChange={handlePropertyChange}
                       size="small"
                     />
@@ -375,12 +449,96 @@ function PortfolioSetup() {
                   <Grid item xs={12} sm={6}>
                     <TextField
                       fullWidth
+                      label="Building Size (sq ft)"
+                      name="building_size"
+                      type="number"
+                      value={propertyFormData.building_size}
+                      onChange={handlePropertyChange}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Initial NOI"
+                      name="initial_noi"
+                      type="text"
+                      inputMode="numeric"
+                      value={getPropertyCurrencyValue('initial_noi')}
+                      onFocus={() => setFocusedPropertyCurrencyField('initial_noi')}
+                      onBlur={() => setFocusedPropertyCurrencyField(null)}
+                      onChange={handlePropertyChange}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
                       label="Exit Date"
                       name="exit_date"
                       type="date"
                       value={propertyFormData.exit_date}
                       onChange={handlePropertyChange}
                       InputLabelProps={{ shrink: true }}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="NOI Growth Rate"
+                      name="noi_growth_rate"
+                      type="number"
+                      value={propertyFormData.noi_growth_rate}
+                      onChange={handlePropertyChange}
+                      inputProps={{ step: 0.01 }}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Year 1 Cap Rate"
+                      name="year_1_cap_rate"
+                      type="number"
+                      value={propertyFormData.year_1_cap_rate}
+                      onChange={handlePropertyChange}
+                      inputProps={{ step: 0.01 }}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Exit Cap Rate"
+                      name="exit_cap_rate"
+                      type="number"
+                      value={propertyFormData.exit_cap_rate}
+                      onChange={handlePropertyChange}
+                      inputProps={{ step: 0.01 }}
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Capex % of NOI"
+                      name="capex_percent_of_noi"
+                      type="number"
+                      value={propertyFormData.capex_percent_of_noi}
+                      onChange={handlePropertyChange}
+                      inputProps={{ step: 0.01, min: 0 }}
+                      helperText="Enter decimal (e.g., 0.1 = 10%)"
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Valuation Method"
+                      name="valuation_method"
+                      value={propertyFormData.valuation_method}
+                      onChange={handlePropertyChange}
                       size="small"
                     />
                   </Grid>
@@ -418,7 +576,7 @@ function PortfolioSetup() {
                     }
                     setShowLoanForm(true)
                     setShowPropertyForm(false)
-                    setSelectedPropertyForLoan(properties[0])
+                    setSelectedPropertyForLoan(properties[0] || null)
                   }}
                   size="small"
                 >
@@ -441,19 +599,21 @@ function PortfolioSetup() {
                       fullWidth
                       select
                       label="Property"
-                      value={selectedPropertyForLoan?.id || ''}
-                      onChange={(e) => {
-                        const property = properties.find(p => p.id === e.target.value)
-                        setSelectedPropertyForLoan(property)
-                      }}
+                      value={selectedPropertyForLoan ? String(selectedPropertyForLoan.id) : ''}
+                      onChange={(e) => handleLoanPropertySelect(e.target.value)}
                       required
                       size="small"
                     >
-                      {properties.map((property) => (
-                        <MenuItem key={property.id} value={property.id}>
-                          {property.property_name}
-                        </MenuItem>
-                      ))}
+                      {properties.map((property) => {
+                        const label = property.property_name
+                          ? `${property.property_name} (${property.property_id})`
+                          : property.property_id
+                        return (
+                          <MenuItem key={property.id} value={String(property.id)}>
+                            {label}
+                          </MenuItem>
+                        )
+                      })}
                     </TextField>
                   </Grid>
                   <Grid item xs={12} sm={6}>
@@ -626,7 +786,14 @@ function PortfolioSetup() {
                           {property.purchase_price && (
                             <Grid item xs={12} sm={6}>
                               <Typography variant="body2">
-                                <strong>Purchase Price:</strong> ${parseFloat(property.purchase_price).toLocaleString()}
+                                <strong>Purchase Price:</strong> {formatCurrency(property.purchase_price)}
+                              </Typography>
+                            </Grid>
+                          )}
+                          {property.capex_percent_of_noi != null && (
+                            <Grid item xs={12} sm={6}>
+                              <Typography variant="body2">
+                                <strong>Capex % of NOI:</strong> {(Number(property.capex_percent_of_noi) * 100).toFixed(2)}%
                               </Typography>
                             </Grid>
                           )}
@@ -659,10 +826,10 @@ function PortfolioSetup() {
                                         {loan.loan_id}
                                       </Typography>
                                       <Typography variant="body2" sx={{ mt: 0.5 }}>
-                                        Principal: ${parseFloat(loan.principal_amount).toLocaleString()}
+                                        Principal: {formatCurrency(loan.principal_amount)}
                                       </Typography>
                                       <Typography variant="body2">
-                                        Rate: {(parseFloat(loan.interest_rate) * 100).toFixed(2)}%
+                                        Rate: {formatLoanRate(loan)}
                                       </Typography>
                                     </Box>
                                     <IconButton

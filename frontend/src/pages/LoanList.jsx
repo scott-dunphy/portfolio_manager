@@ -6,6 +6,23 @@ import {
 } from '@mui/material'
 import { Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon } from '@mui/icons-material'
 import { loanAPI } from '../services/api'
+import { formatCurrencyDisplay } from '../utils/numberFormat'
+
+const formatCurrency = (value) => {
+  const formatted = formatCurrencyDisplay(value)
+  if (formatted === '—') {
+    return formatted
+  }
+  return `$${formatted}`
+}
+
+const formatRateLabel = (loan) => {
+  if (loan.rate_type === 'floating') {
+    const spread = loan.sofr_spread != null ? (loan.sofr_spread * 100).toFixed(2) : '0.00'
+    return `SOFR + ${spread}%`
+  }
+  return loan.interest_rate != null ? `${(loan.interest_rate * 100).toFixed(2)}%` : '—'
+}
 
 function LoanList() {
   const navigate = useNavigate()
@@ -55,7 +72,7 @@ function LoanList() {
               <TableCell>Loan ID</TableCell>
               <TableCell>Loan Name</TableCell>
               <TableCell>Principal Amount</TableCell>
-              <TableCell>Interest Rate</TableCell>
+              <TableCell>Rate</TableCell>
               <TableCell>Origination Date</TableCell>
               <TableCell>Maturity Date</TableCell>
               <TableCell>Actions</TableCell>
@@ -66,8 +83,8 @@ function LoanList() {
               <TableRow key={loan.id}>
                 <TableCell>{loan.loan_id}</TableCell>
                 <TableCell>{loan.loan_name}</TableCell>
-                <TableCell>${loan.principal_amount?.toLocaleString()}</TableCell>
-                <TableCell>{(loan.interest_rate * 100).toFixed(2)}%</TableCell>
+                <TableCell>{formatCurrency(loan.principal_amount)}</TableCell>
+                <TableCell>{formatRateLabel(loan)}</TableCell>
                 <TableCell>{loan.origination_date}</TableCell>
                 <TableCell>{loan.maturity_date}</TableCell>
                 <TableCell>

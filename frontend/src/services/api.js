@@ -28,6 +28,9 @@ export const propertyAPI = {
   create: (data) => api.post('/properties', data),
   update: (id, data) => api.put(`/properties/${id}`, data),
   delete: (id) => api.delete(`/properties/${id}`),
+  saveManualCashFlows: (propertyId, payload) =>
+    api.put(`/properties/${propertyId}/manual-cash-flows`, payload),
+  getManualCashFlows: (propertyId) => api.get(`/properties/${propertyId}/manual-cash-flows`)
 }
 
 // Loan API
@@ -54,16 +57,38 @@ export const preferredEquityAPI = {
   delete: (id) => api.delete(`/preferred-equities/${id}`),
 }
 
+export const propertyOwnershipAPI = {
+  getAll: (propertyId) => api.get(`/properties/${propertyId}/ownership-events`),
+  create: (propertyId, data) => api.post(`/properties/${propertyId}/ownership-events`, data),
+  delete: (propertyId, eventId) => api.delete(`/properties/${propertyId}/ownership-events/${eventId}`)
+}
+
 // Cash Flow API
 export const cashFlowAPI = {
-  getAll: (portfolioId = null) => {
-    const url = portfolioId ? `/cash-flows?portfolio_id=${portfolioId}` : '/cash-flows'
+  getAll: (filters = {}) => {
+    const params = new URLSearchParams()
+
+    if (typeof filters === 'number' || typeof filters === 'string') {
+      if (filters) {
+        params.append('portfolio_id', filters)
+      }
+    } else if (filters && typeof filters === 'object') {
+      const { portfolioId, propertyId, loanId } = filters
+      if (portfolioId) params.append('portfolio_id', portfolioId)
+      if (propertyId) params.append('property_id', propertyId)
+      if (loanId) params.append('loan_id', loanId)
+    }
+
+    const query = params.toString()
+    const url = query ? `/cash-flows?${query}` : '/cash-flows'
     return api.get(url)
   },
   getById: (id) => api.get(`/cash-flows/${id}`),
   create: (data) => api.post('/cash-flows', data),
   update: (id, data) => api.put(`/cash-flows/${id}`, data),
   delete: (id) => api.delete(`/cash-flows/${id}`),
+  downloadReport: (portfolioId) =>
+    api.get(`/cash-flows/export?portfolio_id=${portfolioId}`, { responseType: 'blob' }),
 }
 
 // Upload API

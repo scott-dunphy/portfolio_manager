@@ -107,7 +107,10 @@ function ExcelUpload() {
             Download Template
           </Button>
           <Typography variant="body2" color="text.secondary">
-            Download the Excel template to see the required format for property import.
+            Export includes separate sheets for Properties, Loans, and Manual NOI/Capex overrides so you can prepare everything before uploading.
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Tip: Property_ID must be unique within a portfolio and is used to link loans and manual overrides.
           </Typography>
         </Box>
 
@@ -170,20 +173,20 @@ function ExcelUpload() {
         )}
 
         {result && (
-          <Alert severity="success" sx={{ mb: 2 }}>
+          <Alert severity={result.errors && result.errors.length ? 'warning' : 'success'} sx={{ mb: 2 }}>
             <Typography variant="body1" gutterBottom>
               {result.message}
             </Typography>
             <Typography variant="body2">
-              Properties created: {result.properties_created}
+              Properties created: {result.properties_created} · updated: {result.properties_updated}
             </Typography>
             <Typography variant="body2">
-              Loans created: {result.loans_created}
+              Loans created: {result.loans_created} · updated: {result.loans_updated}
             </Typography>
             {result.errors && result.errors.length > 0 && (
               <Box sx={{ mt: 1 }}>
                 <Typography variant="body2" color="error">
-                  Errors:
+                  Issues detected:
                 </Typography>
                 <List dense>
                   {result.errors.map((err, idx) => (

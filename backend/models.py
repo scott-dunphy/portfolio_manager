@@ -66,12 +66,29 @@ class Property(db.Model):
     noi_growth_rate = db.Column(db.Float)
     initial_noi = db.Column(db.Float)
     valuation_method = db.Column(db.String(50), default='growth')
+    ownership_percent = db.Column(db.Float, default=1.0)
+    capex_percent_of_noi = db.Column(db.Float, default=0.0)
+    use_manual_noi_capex = db.Column(db.Boolean, default=False)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Additional fields can be stored as JSON
     additional_data = db.Column(db.Text)
+    ownership_events = db.relationship(
+        'PropertyOwnershipEvent',
+        backref='property',
+        lazy=True,
+        cascade='all, delete-orphan',
+        order_by='PropertyOwnershipEvent.event_date'
+    )
+    manual_cash_flows = db.relationship(
+        'PropertyManualCashFlow',
+        backref='property',
+        lazy=True,
+        cascade='all, delete-orphan',
+        order_by='PropertyManualCashFlow.year'
+    )
 
     def to_dict(self):
         return {
@@ -93,6 +110,11 @@ class Property(db.Model):
             'noi_growth_rate': self.noi_growth_rate,
             'initial_noi': self.initial_noi,
             'valuation_method': self.valuation_method,
+            'ownership_percent': self.ownership_percent,
+            'capex_percent_of_noi': self.capex_percent_of_noi,
+            'use_manual_noi_capex': self.use_manual_noi_capex,
+            'manual_cash_flows': [entry.to_dict() for entry in self.manual_cash_flows],
+            'ownership_events': [event.to_dict() for event in self.ownership_events],
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
@@ -109,6 +131,8 @@ class Loan(db.Model):
     loan_name = db.Column(db.String(255), nullable=False)
     principal_amount = db.Column(db.Float, nullable=False)
     interest_rate = db.Column(db.Float, nullable=False)
+    rate_type = db.Column(db.String(20), default='fixed')
+    sofr_spread = db.Column(db.Float, default=0.0)
     origination_date = db.Column(db.Date, nullable=False)
     maturity_date = db.Column(db.Date, nullable=False)
     payment_frequency = db.Column(db.String(50), default='monthly')
@@ -132,6 +156,8 @@ class Loan(db.Model):
             'loan_name': self.loan_name,
             'principal_amount': self.principal_amount,
             'interest_rate': self.interest_rate,
+            'rate_type': self.rate_type,
+            'sofr_spread': self.sofr_spread,
             'origination_date': self.origination_date.isoformat() if self.origination_date else None,
             'maturity_date': self.maturity_date.isoformat() if self.maturity_date else None,
             'payment_frequency': self.payment_frequency,
@@ -204,6 +230,52 @@ class CashFlow(db.Model):
             'cash_flow_type': self.cash_flow_type,
             'amount': self.amount,
             'description': self.description,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+
+
+class PropertyOwnershipEvent(db.Model):
+    __tablename__ = 'property_ownership_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
+    event_date = db.Column(db.Date, nullable=False)
+    ownership_percent = db.Column(db.Float, nullable=False)
+    note = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'property_id': self.property_id,
+            'event_date': self.event_date.isoformat() if self.event_date else None,
+            'ownership_percent': self.ownership_percent,
+            'note': self.note
+        }
+
+
+class PropertyManualCashFlow(db.Model):
+    __tablename__ = 'property_manual_cash_flows'
+
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
+    year = db.Column(db.Integer, nullable=False)
+    month = db.Column(db.Integer)
+    annual_noi = db.Column(db.Float)
+    annual_capex = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'property_id': self.property_id,
+            'year': self.year,
+            'month': self.month,
+            'annual_noi': self.annual_noi,
+            'annual_capex': self.annual_capex,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }

@@ -1,11 +1,12 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from database import db
 from models import Loan
 from datetime import datetime
+from services.cash_flow_service import clear_loan_cash_flows, regenerate_loan_cash_flows
 
 bp = Blueprint('loans', __name__, url_prefix='/api/loans')
 
-@bp.route('/', methods=['GET'])
+@bp.route('', methods=['GET'])
 def get_loans():
     """Get all loans, optionally filtered by portfolio_id"""
     portfolio_id = request.args.get('portfolio_id', type=int)
@@ -23,19 +24,32 @@ def get_loan(loan_id):
     loan = Loan.query.get_or_404(loan_id)
     return jsonify(loan.to_dict())
 
-@bp.route('/', methods=['POST'])
+@bp.route('', methods=['POST'])
 def create_loan():
     """Create a new loan"""
     data = request.get_json()
 
     try:
+        rate_type = (data.get('rate_type') or 'fixed').lower()
+        if rate_type not in ('fixed', 'floating'):
+            return jsonify({"error": "rate_type must be 'fixed' or 'floating'"}), 400
+
+        interest_rate = data.get('interest_rate')
+        if rate_type == 'fixed':
+            if interest_rate is None:
+                return jsonify({"error": "interest_rate is required for fixed-rate loans"}), 400
+        else:
+            interest_rate = interest_rate or 0.0
+
         loan = Loan(
             portfolio_id=data['portfolio_id'],
             property_id=data.get('property_id'),
             loan_id=data['loan_id'],
             loan_name=data['loan_name'],
             principal_amount=data['principal_amount'],
-            interest_rate=data['interest_rate'],
+            interest_rate=interest_rate,
+            rate_type=rate_type,
+            sofr_spread=data.get('sofr_spread', 0.0),
             origination_date=datetime.fromisoformat(data['origination_date']).date(),
             maturity_date=datetime.fromisoformat(data['maturity_date']).date(),
             payment_frequency=data.get('payment_frequency', 'monthly'),
@@ -49,6 +63,11 @@ def create_loan():
         db.session.add(loan)
         db.session.commit()
 
+        try:
+            regenerate_loan_cash_flows(loan)
+        except Exception:
+            current_app.logger.exception('Failed to regenerate cash flows for loan %s', loan.id)
+
         return jsonify(loan.to_dict()), 201
     except Exception as e:
         db.session.rollback()
@@ -61,10 +80,18 @@ def update_loan(loan_id):
     data = request.get_json()
 
     try:
+        if 'rate_type' in data:
+            rate_type = (data['rate_type'] or 'fixed').lower()
+            if rate_type not in ('fixed', 'floating'):
+                return jsonify({"error": "rate_type must be 'fixed' or 'floating'"}), 400
+            loan.rate_type = rate_type
+            if rate_type == 'floating' and (loan.interest_rate is None or loan.interest_rate == 0):
+                loan.interest_rate = 0.0
+
         # Update fields if provided
         for field in ['loan_name', 'principal_amount', 'interest_rate', 'payment_frequency',
                       'loan_type', 'amortization_period_months', 'io_period_months',
-                      'origination_fee', 'exit_fee', 'property_id']:
+                      'origination_fee', 'exit_fee', 'property_id', 'sofr_spread']:
             if field in data:
                 setattr(loan, field, data[field])
 
@@ -75,6 +102,11 @@ def update_loan(loan_id):
 
         loan.updated_at = datetime.utcnow()
         db.session.commit()
+
+        try:
+            regenerate_loan_cash_flows(loan)
+        except Exception:
+            current_app.logger.exception('Failed to regenerate cash flows for loan %s', loan.id)
 
         return jsonify(loan.to_dict())
     except Exception as e:
@@ -87,6 +119,7 @@ def delete_loan(loan_id):
     loan = Loan.query.get_or_404(loan_id)
 
     try:
+        clear_loan_cash_flows(loan.id, commit=False)
         db.session.delete(loan)
         db.session.commit()
         return jsonify({"message": "Loan deleted successfully"}), 200

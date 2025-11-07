@@ -5,6 +5,10 @@ import {
 } from '@mui/material'
 import { ArrowBack as ArrowBackIcon } from '@mui/icons-material'
 import { propertyAPI, portfolioAPI } from '../services/api'
+import {
+  formatCurrencyInputValue,
+  sanitizeCurrencyInput
+} from '../utils/numberFormat'
 
 function PropertyForm() {
   const { id } = useParams()
@@ -27,8 +31,11 @@ function PropertyForm() {
     building_size: '',
     noi_growth_rate: '',
     initial_noi: '',
-    valuation_method: 'growth'
+    valuation_method: 'growth',
+    ownership_percent: 1,
+    capex_percent_of_noi: ''
   })
+  const [focusedCurrencyField, setFocusedCurrencyField] = useState(null)
 
   useEffect(() => {
     fetchPortfolios()
@@ -46,10 +53,29 @@ function PropertyForm() {
     }
   }
 
+  const currencyFields = new Set(['purchase_price', 'initial_noi'])
+
+  const getCurrencyValue = (name) => {
+    const raw = formData[name] ?? ''
+    if (focusedCurrencyField === name) {
+      return raw
+    }
+    return formatCurrencyInputValue(raw)
+  }
+
+
   const fetchProperty = async () => {
     try {
       const response = await propertyAPI.getById(id)
-      setFormData(response.data)
+      const data = response.data
+      setFormData(prev => ({
+        ...prev,
+        ...data,
+        purchase_price: data.purchase_price != null ? String(Math.round(data.purchase_price)) : '',
+        initial_noi: data.initial_noi != null ? String(Math.round(data.initial_noi)) : '',
+        capex_percent_of_noi:
+          data.capex_percent_of_noi != null ? String(data.capex_percent_of_noi) : ''
+      }))
     } catch (error) {
       console.error('Error fetching property:', error)
     }
@@ -57,16 +83,27 @@ function PropertyForm() {
 
   const handleChange = (e) => {
     const { name, value } = e.target
-    setFormData(prev => ({ ...prev, [name]: value }))
+    if (currencyFields.has(name)) {
+      setFormData(prev => ({ ...prev, [name]: sanitizeCurrencyInput(value) }))
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }))
+    }
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     try {
+      const payload = {
+        ...formData,
+        purchase_price: formData.purchase_price ? Number(formData.purchase_price) : null,
+        initial_noi: formData.initial_noi ? Number(formData.initial_noi) : null,
+        capex_percent_of_noi:
+          formData.capex_percent_of_noi === '' ? null : Number(formData.capex_percent_of_noi)
+      }
       if (id) {
-        await propertyAPI.update(id, formData)
+        await propertyAPI.update(id, payload)
       } else {
-        await propertyAPI.create(formData)
+        await propertyAPI.create(payload)
       }
       navigate(-1)
     } catch (error) {
@@ -134,6 +171,31 @@ function PropertyForm() {
                 onChange={handleChange}
               />
             </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Ownership %"
+                name="ownership_percent"
+                type="text"
+                inputMode="numeric"
+                value={formData.ownership_percent ?? ''}
+                onChange={handleChange}
+                inputProps={{ step: 0.01, min: 0, max: 1 }}
+                helperText="Enter as decimal (e.g., 1 = 100%)"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Capex % of NOI"
+                name="capex_percent_of_noi"
+                type="number"
+                value={formData.capex_percent_of_noi}
+                onChange={handleChange}
+                inputProps={{ step: 0.01, min: 0 }}
+                helperText="Decimal percent of NOI (e.g., 0.1 = 10%)"
+              />
+            </Grid>
             <Grid item xs={12}>
               <TextField
                 fullWidth
@@ -175,8 +237,11 @@ function PropertyForm() {
                 fullWidth
                 label="Purchase Price"
                 name="purchase_price"
-                type="number"
-                value={formData.purchase_price}
+                type="text"
+                inputMode="numeric"
+                value={getCurrencyValue('purchase_price')}
+                onFocus={() => setFocusedCurrencyField('purchase_price')}
+                onBlur={() => setFocusedCurrencyField(null)}
                 onChange={handleChange}
               />
             </Grid>
@@ -217,8 +282,11 @@ function PropertyForm() {
                 fullWidth
                 label="Initial NOI"
                 name="initial_noi"
-                type="number"
-                value={formData.initial_noi}
+                type="text"
+                inputMode="numeric"
+                value={getCurrencyValue('initial_noi')}
+                onFocus={() => setFocusedCurrencyField('initial_noi')}
+                onBlur={() => setFocusedCurrencyField(null)}
                 onChange={handleChange}
               />
             </Grid>

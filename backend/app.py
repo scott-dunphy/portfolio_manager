@@ -3,6 +3,7 @@ from flask_cors import CORS
 from database import db
 from datetime import datetime
 import os
+from utils.schema import ensure_schema
 
 def create_app():
     app = Flask(__name__)
@@ -17,8 +18,11 @@ def create_app():
     db.init_app(app)
     CORS(app)
 
+    with app.app_context():
+        ensure_schema()
+
     # Import routes
-    from routes import portfolio_routes, property_routes, loan_routes, preferred_equity_routes, cash_flow_routes, upload_routes
+    from routes import portfolio_routes, property_routes, loan_routes, preferred_equity_routes, cash_flow_routes, upload_routes, property_ownership_routes
 
     # Register blueprints
     app.register_blueprint(portfolio_routes.bp)
@@ -27,6 +31,7 @@ def create_app():
     app.register_blueprint(preferred_equity_routes.bp)
     app.register_blueprint(cash_flow_routes.bp)
     app.register_blueprint(upload_routes.bp)
+    app.register_blueprint(property_ownership_routes.bp)
 
     return app
 

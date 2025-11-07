@@ -5,6 +5,10 @@ import {
 } from '@mui/material'
 import { ArrowBack as ArrowBackIcon } from '@mui/icons-material'
 import { loanAPI, portfolioAPI, propertyAPI } from '../services/api'
+import {
+  formatCurrencyInputValue,
+  sanitizeCurrencyInput
+} from '../utils/numberFormat'
 
 function LoanForm() {
   const { id } = useParams()
@@ -18,14 +22,16 @@ function LoanForm() {
     loan_name: '',
     principal_amount: '',
     interest_rate: '',
+    rate_type: 'fixed',
+    sofr_spread: '',
     origination_date: '',
     maturity_date: '',
     payment_frequency: 'monthly',
     loan_type: '',
     amortization_period_months: '',
     io_period_months: 0,
-    origination_fee: 0,
-    exit_fee: 0
+    origination_fee: '',
+    exit_fee: ''
   })
 
   useEffect(() => {
@@ -59,10 +65,33 @@ function LoanForm() {
     }
   }
 
+  const currencyFields = new Set(['principal_amount', 'origination_fee', 'exit_fee'])
+  const [focusedCurrencyField, setFocusedCurrencyField] = useState(null)
+
+  const getCurrencyFieldValue = (name) => {
+    const raw = formData[name] ?? ''
+    if (focusedCurrencyField === name) {
+      return raw
+    }
+    return formatCurrencyInputValue(raw)
+  }
+
+  const handleCurrencyFocus = (name) => setFocusedCurrencyField(name)
+  const handleCurrencyBlur = () => setFocusedCurrencyField(null)
+
   const fetchLoan = async () => {
     try {
       const response = await loanAPI.getById(id)
-      setFormData(response.data)
+      const data = response.data
+      setFormData(prev => ({
+        ...prev,
+        ...data,
+        rate_type: data.rate_type || 'fixed',
+        principal_amount: data.principal_amount != null ? String(Math.round(data.principal_amount)) : '',
+        origination_fee: data.origination_fee != null ? String(Math.round(data.origination_fee)) : '',
+        exit_fee: data.exit_fee != null ? String(Math.round(data.exit_fee)) : '',
+        sofr_spread: data.sofr_spread != null ? String(data.sofr_spread) : ''
+      }))
     } catch (error) {
       console.error('Error fetching loan:', error)
     }
@@ -70,16 +99,31 @@ function LoanForm() {
 
   const handleChange = (e) => {
     const { name, value } = e.target
-    setFormData(prev => ({ ...prev, [name]: value }))
+    if (currencyFields.has(name)) {
+      setFormData(prev => ({ ...prev, [name]: sanitizeCurrencyInput(value) }))
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }))
+    }
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     try {
+      const payload = {
+        ...formData,
+        principal_amount: Number(formData.principal_amount || 0),
+        origination_fee: formData.origination_fee === '' ? 0 : Number(formData.origination_fee),
+        exit_fee: formData.exit_fee === '' ? 0 : Number(formData.exit_fee),
+        sofr_spread: formData.sofr_spread === '' ? 0 : Number(formData.sofr_spread),
+        interest_rate:
+          formData.rate_type === 'fixed'
+            ? Number(formData.interest_rate || 0)
+            : Number(formData.interest_rate || 0)
+      }
       if (id) {
-        await loanAPI.update(id, formData)
+        await loanAPI.update(id, payload)
       } else {
-        await loanAPI.create(formData)
+        await loanAPI.create(payload)
       }
       navigate(-1)
     } catch (error) {
@@ -128,11 +172,16 @@ function LoanForm() {
                 onChange={handleChange}
               >
                 <MenuItem value="">None</MenuItem>
-                {properties.map((property) => (
-                  <MenuItem key={property.id} value={property.id}>
-                    {property.property_name}
-                  </MenuItem>
-                ))}
+                {properties.map((property) => {
+                  const label = property.property_name
+                    ? `${property.property_name} (${property.property_id})`
+                    : property.property_id
+                  return (
+                    <MenuItem key={property.id} value={property.id}>
+                      {label}
+                    </MenuItem>
+                  )
+                })}
               </TextField>
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -160,8 +209,11 @@ function LoanForm() {
                 fullWidth
                 label="Principal Amount"
                 name="principal_amount"
-                type="number"
-                value={formData.principal_amount}
+                type="text"
+                inputMode="numeric"
+                value={getCurrencyFieldValue('principal_amount')}
+                onFocus={() => handleCurrencyFocus('principal_amount')}
+                onBlur={handleCurrencyBlur}
                 onChange={handleChange}
                 required
               />
@@ -171,13 +223,43 @@ function LoanForm() {
                 fullWidth
                 label="Interest Rate (decimal, e.g., 0.05 for 5%)"
                 name="interest_rate"
-                type="number"
+                type="text"
+                inputMode="numeric"
                 value={formData.interest_rate}
                 onChange={handleChange}
                 inputProps={{ step: 0.001 }}
-                required
+                required={formData.rate_type === 'fixed'}
+                disabled={formData.rate_type === 'floating'}
+                helperText={formData.rate_type === 'floating' ? 'Floating loans use SOFR forward curve + spread' : ''}
               />
             </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                select
+                label="Rate Type"
+                name="rate_type"
+                value={formData.rate_type}
+                onChange={handleChange}
+              >
+                <MenuItem value="fixed">Fixed</MenuItem>
+                <MenuItem value="floating">Floating (SOFR + Spread)</MenuItem>
+              </TextField>
+            </Grid>
+            {formData.rate_type === 'floating' && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Spread over SOFR (decimal, e.g., 0.02)"
+                  name="sofr_spread"
+                  type="text"
+                  inputMode="numeric"
+                  value={formData.sofr_spread}
+                  onChange={handleChange}
+                  helperText="Decimal format (0.02 = 200 bps)"
+                />
+              </Grid>
+            )}
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
@@ -230,7 +312,8 @@ function LoanForm() {
                 fullWidth
                 label="Amortization Period (months)"
                 name="amortization_period_months"
-                type="number"
+                type="text"
+                inputMode="numeric"
                 value={formData.amortization_period_months}
                 onChange={handleChange}
               />
@@ -250,8 +333,11 @@ function LoanForm() {
                 fullWidth
                 label="Origination Fee"
                 name="origination_fee"
-                type="number"
-                value={formData.origination_fee}
+                type="text"
+                inputMode="numeric"
+                value={getCurrencyFieldValue('origination_fee')}
+                onFocus={() => handleCurrencyFocus('origination_fee')}
+                onBlur={handleCurrencyBlur}
                 onChange={handleChange}
               />
             </Grid>
@@ -260,8 +346,11 @@ function LoanForm() {
                 fullWidth
                 label="Exit Fee"
                 name="exit_fee"
-                type="number"
-                value={formData.exit_fee}
+                type="text"
+                inputMode="numeric"
+                value={getCurrencyFieldValue('exit_fee')}
+                onFocus={() => handleCurrencyFocus('exit_fee')}
+                onBlur={handleCurrencyBlur}
                 onChange={handleChange}
               />
             </Grid>
