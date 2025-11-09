@@ -24,10 +24,12 @@ function PropertyForm() {
     state: '',
     zip_code: '',
     purchase_price: '',
+    market_value_start: '',
     purchase_date: '',
     exit_date: '',
     exit_cap_rate: '',
     year_1_cap_rate: '',
+    calculated_year1_cap_rate: '',
     building_size: '',
     noi_growth_rate: '',
     initial_noi: '',
@@ -53,7 +55,7 @@ function PropertyForm() {
     }
   }
 
-  const currencyFields = new Set(['purchase_price', 'initial_noi'])
+  const currencyFields = new Set(['purchase_price', 'initial_noi', 'market_value_start'])
 
   const getCurrencyValue = (name) => {
     const raw = formData[name] ?? ''
@@ -72,9 +74,12 @@ function PropertyForm() {
         ...prev,
         ...data,
         purchase_price: data.purchase_price != null ? String(Math.round(data.purchase_price)) : '',
+        market_value_start:
+          data.market_value_start != null ? String(Math.round(data.market_value_start)) : '',
         initial_noi: data.initial_noi != null ? String(Math.round(data.initial_noi)) : '',
         capex_percent_of_noi:
-          data.capex_percent_of_noi != null ? String(data.capex_percent_of_noi) : ''
+          data.capex_percent_of_noi != null ? String(data.capex_percent_of_noi) : '',
+        calculated_year1_cap_rate: data.calculated_year1_cap_rate ?? data.year_1_cap_rate ?? ''
       }))
     } catch (error) {
       console.error('Error fetching property:', error)
@@ -93,9 +98,11 @@ function PropertyForm() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     try {
+      const { calculated_year1_cap_rate, ...rest } = formData
       const payload = {
-        ...formData,
+        ...rest,
         purchase_price: formData.purchase_price ? Number(formData.purchase_price) : null,
+        market_value_start: formData.market_value_start ? Number(formData.market_value_start) : null,
         initial_noi: formData.initial_noi ? Number(formData.initial_noi) : null,
         capex_percent_of_noi:
           formData.capex_percent_of_noi === '' ? null : Number(formData.capex_percent_of_noi)
@@ -248,6 +255,20 @@ function PropertyForm() {
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
+                label="Market Value (Analysis Start)"
+                name="market_value_start"
+                type="text"
+                inputMode="numeric"
+                value={getCurrencyValue('market_value_start')}
+                onFocus={() => setFocusedCurrencyField('market_value_start')}
+                onBlur={() => setFocusedCurrencyField(null)}
+                onChange={handleChange}
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
                 label="Building Size (sq ft)"
                 name="building_size"
                 type="number"
@@ -304,12 +325,16 @@ function PropertyForm() {
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
-                label="Year 1 Cap Rate"
+                label="Year 1 Cap Rate (Calculated)"
                 name="year_1_cap_rate"
                 type="number"
-                value={formData.year_1_cap_rate}
-                onChange={handleChange}
-                inputProps={{ step: 0.01 }}
+                value={
+                  formData.calculated_year1_cap_rate !== ''
+                    ? formData.calculated_year1_cap_rate
+                    : formData.year_1_cap_rate
+                }
+                InputProps={{ readOnly: true }}
+                helperText="Automatically calculated after saving"
               />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -321,6 +346,7 @@ function PropertyForm() {
                 value={formData.exit_cap_rate}
                 onChange={handleChange}
                 inputProps={{ step: 0.01 }}
+                required
               />
             </Grid>
             <Grid item xs={12}>

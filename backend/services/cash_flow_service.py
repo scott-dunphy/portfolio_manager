@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import json
 import math
 from calendar import monthrange
 from datetime import date, datetime
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 from dateutil.relativedelta import relativedelta
 
 from database import db
 from models import CashFlow, Loan, Portfolio, Property
 from services.sofr_client import get_forward_rate
+from services.forward_curve_service import get_forward_treasury_rate
 
 
 def regenerate_property_cash_flows(property_obj: Property, commit: bool = True) -> int:
@@ -208,6 +210,9 @@ def _build_property_cash_flows(property_obj: Property) -> List[dict]:
 
 def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
     flows: List[dict] = []
+    portfolio = _get_loan_portfolio(loan_obj)
+    auto_refi_enabled = bool(getattr(portfolio, 'auto_refinance_enabled', False)) if portfolio else False
+    refi_spreads = _load_refi_spreads(portfolio) if auto_refi_enabled else {}
 
     principal = _safe_float(loan_obj.principal_amount)
     rate = _safe_float(loan_obj.interest_rate) or 0.0
@@ -243,6 +248,8 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
     rate_type = (getattr(loan_obj, 'rate_type', 'fixed') or 'fixed').lower()
     is_floating = rate_type == 'floating'
     sofr_spread = _safe_float(getattr(loan_obj, 'sofr_spread', 0.0)) or 0.0
+    day_count_method = _normalize_day_count(getattr(loan_obj, 'interest_day_count', None))
+    amortization_fraction = months_per_period / 12.0
 
     if is_floating:
         full_interest_only = True
@@ -251,7 +258,7 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
         fixed_periodic_rate = 0.0
         payment = 0.0
     else:
-        periodic_rate = rate * months_per_period / 12.0
+        periodic_rate = rate * amortization_fraction
         full_interest_only = (
             (loan_obj.amortization_period_months in (None, 0))
             and (io_months in (None, 0))
@@ -267,23 +274,27 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
         fixed_periodic_rate = periodic_rate
 
     balance = principal
+    prev_payment_date = start_date
     for period_index in range(1, periods + 1):
         scheduled_date = start_date + relativedelta(months=months_per_period * period_index)
         payment_date = _month_end(min(scheduled_date, maturity_date))
+        accrual_fraction = _day_count_fraction(prev_payment_date, payment_date, day_count_method, amortization_fraction)
 
         if is_floating:
             forward_rate = get_forward_rate(payment_date) or rate
             annual_rate = (forward_rate or 0.0) + sofr_spread
-            periodic_rate = annual_rate * months_per_period / 12.0
+            interest = balance * annual_rate * accrual_fraction
         else:
             periodic_rate = fixed_periodic_rate
-
-        interest = balance * periodic_rate
+            interest_rate_for_period = rate * accrual_fraction
+            interest = balance * interest_rate_for_period
 
         if full_interest_only or period_index <= io_periods:
             principal_component = 0.0
         else:
             principal_component = payment - interest if periodic_rate else payment
+            if principal_component < 0:
+                principal_component = 0.0
 
         if principal_component > balance:
             principal_component = balance
@@ -311,9 +322,12 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
 
         if balance <= 1e-4:
             break
+        prev_payment_date = payment_date
 
     # Ensure the final balance is cleared (for balloons / interest-only structures).
+    refi_balance = 0.0
     if balance > 1e-4:
+        refi_balance = balance
         flows.append(
             {
                 "date": maturity_date,
@@ -322,6 +336,17 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
                 "description": "Balloon repayment",
             }
         )
+        balance = 0.0
+
+    if auto_refi_enabled and refi_balance > 1e-4:
+        property_obj = _resolve_property_for_loan(loan_obj)
+        refi_flows = _build_auto_refi_flows(
+            refi_balance,
+            maturity_date,
+            property_obj,
+            refi_spreads,
+        )
+        flows.extend(refi_flows)
 
     return flows
 
@@ -394,3 +419,127 @@ def _get_property_portfolio(property_obj: Property) -> Optional[Portfolio]:
         return Portfolio.query.get(property_obj.portfolio_id)
 
     return None
+
+
+def _normalize_day_count(value: Optional[str]) -> str:
+    normalized = (value or '30/360').lower().replace('_', '/')
+    if normalized not in {'30/360', 'actual/360', 'actual/365'}:
+        return '30/360'
+    return normalized
+
+
+def _day_count_fraction(
+    start: Optional[date],
+    end: Optional[date],
+    method: str,
+    fallback_fraction: float,
+) -> float:
+    if not start or not end or end <= start:
+        return max(fallback_fraction, 1 / 12.0)
+
+    if method == 'actual/360':
+        days = (end - start).days
+        return days / 360.0
+    if method == 'actual/365':
+        days = (end - start).days
+        return days / 365.0
+
+    # 30/360 US convention.
+    y1, m1, d1 = start.year, start.month, min(start.day, 30)
+    y2, m2, d2 = end.year, end.month, min(end.day if start.day < 30 else 30, 30)
+    fraction = ((y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1)) / 360.0
+    if fraction <= 0:
+        return max(fallback_fraction, 1 / 12.0)
+    return fraction
+
+
+def _get_loan_portfolio(loan_obj: Loan) -> Optional[Portfolio]:
+    portfolio = getattr(loan_obj, 'portfolio', None)
+    if portfolio is not None:
+        return portfolio
+    if loan_obj.portfolio_id:
+        return Portfolio.query.get(loan_obj.portfolio_id)
+    return None
+
+
+def _resolve_property_for_loan(loan_obj: Loan) -> Optional[Property]:
+    property_obj = getattr(loan_obj, 'property', None)
+    if property_obj is not None:
+        return property_obj
+    if loan_obj.property_id:
+        return Property.query.get(loan_obj.property_id)
+    return None
+
+
+def _load_refi_spreads(portfolio: Optional[Portfolio]) -> Dict[str, float]:
+    if not portfolio or not getattr(portfolio, 'auto_refinance_spreads', None):
+        return {}
+    try:
+        data = json.loads(portfolio.auto_refinance_spreads)
+        if isinstance(data, dict):
+            return {str(k).strip().lower(): float(v) for k, v in data.items() if v is not None}
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return {}
+    return {}
+
+
+def _get_spread_for_property(spreads: Dict[str, float], property_obj: Optional[Property]) -> float:
+    type_key = None
+    if property_obj and property_obj.property_type:
+        type_key = property_obj.property_type.strip().lower()
+    elif not property_obj:
+        type_key = 'unassigned'
+    if type_key and type_key in spreads:
+        return spreads[type_key]
+    return spreads.get('default', 0.0)
+
+
+def _build_auto_refi_flows(
+    balance: float,
+    maturity_date: date,
+    property_obj: Optional[Property],
+    refi_spreads: Dict[str, float],
+) -> List[dict]:
+    if balance <= 0:
+        return []
+    spread = _get_spread_for_property(refi_spreads, property_obj)
+    forward_rate = get_forward_treasury_rate(maturity_date) or 0.0
+    total_rate = forward_rate + spread
+    if total_rate < 0:
+        total_rate = 0.0
+
+    flows = []
+    term_months = 120  # 10-year, monthly periods
+    start_date = maturity_date
+    flows.append(
+        {
+            "date": start_date,
+            "type": "loan_funding",
+            "amount": balance,
+            "description": "Auto-refinance funding",
+        }
+    )
+
+    for month_index in range(1, term_months + 1):
+        payment_date = _month_end(start_date + relativedelta(months=month_index))
+        interest = -balance * (total_rate / 12.0)
+        flows.append(
+            {
+                "date": payment_date,
+                "type": "loan_interest",
+                "amount": interest,
+                "description": "Auto-refinance interest",
+            }
+        )
+
+    final_date = _month_end(start_date + relativedelta(months=term_months))
+    flows.append(
+        {
+            "date": final_date,
+            "type": "loan_principal",
+            "amount": -balance,
+            "description": "Auto-refinance maturity",
+        }
+    )
+
+    return flows

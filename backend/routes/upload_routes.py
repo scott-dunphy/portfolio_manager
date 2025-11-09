@@ -8,14 +8,17 @@ from database import db
 from models import Loan, Property, PropertyManualCashFlow
 from services.cash_flow_service import regenerate_loan_cash_flows, regenerate_property_cash_flows
 from services.import_template import build_import_template
+from services.property_valuation_service import calculate_property_valuation
 
 bp = Blueprint('upload', __name__, url_prefix='/api/upload')
 
 ALLOWED_EXTENSIONS = {'xlsx', 'xls'}
 
 
-@bp.route('/excel', methods=['POST'])
+@bp.route('/excel', methods=['POST', 'OPTIONS'])
 def upload_excel():
+    if request.method == 'OPTIONS':
+        return ('', 204)
     """Upload and parse Excel file for property & loan data."""
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
@@ -129,6 +132,20 @@ def _process_import(portfolio_id, properties_df, loans_df, manual_df):
 
         property_obj = get_property(property_id)
         is_new = property_obj is None
+        market_value_start = _parse_float(row.get('Market_Value_Start'))
+        if market_value_start is not None and market_value_start <= 0:
+            errors.append(f"Properties row {idx + 2}: Market_Value_Start must be greater than 0.")
+            continue
+        exit_cap_rate = _parse_float(row.get('Exit_Cap_Rate'))
+        if exit_cap_rate is not None and exit_cap_rate <= 0:
+            errors.append(f"Properties row {idx + 2}: Exit_Cap_Rate must be greater than 0.")
+            continue
+        if is_new and market_value_start is None:
+            errors.append(f"Properties row {idx + 2}: Market_Value_Start is required for new properties.")
+            continue
+        if is_new and exit_cap_rate is None:
+            errors.append(f"Properties row {idx + 2}: Exit_Cap_Rate is required for new properties.")
+            continue
         if is_new:
             property_obj = Property(
                 portfolio_id=portfolio_id,
@@ -148,8 +165,10 @@ def _process_import(portfolio_id, properties_df, loans_df, manual_df):
         property_obj.zip_code = str(row.get('Zip_Code')) if pd.notna(row.get('Zip_Code')) else property_obj.zip_code
         property_obj.purchase_price = _parse_float(row.get('Purchase_Price')) or property_obj.purchase_price
         property_obj.building_size = _parse_float(row.get('Building_Size')) or property_obj.building_size
-        property_obj.exit_cap_rate = _parse_float(row.get('Exit_Cap_Rate')) or property_obj.exit_cap_rate
-        property_obj.year_1_cap_rate = _parse_float(row.get('Year_1_Cap_Rate')) or property_obj.year_1_cap_rate
+        if exit_cap_rate is not None:
+            property_obj.exit_cap_rate = exit_cap_rate
+        if market_value_start is not None:
+            property_obj.market_value_start = market_value_start
         property_obj.noi_growth_rate = _parse_float(row.get('NOI_Growth_Rate')) or property_obj.noi_growth_rate
         property_obj.initial_noi = _parse_float(row.get('Initial_NOI')) or property_obj.initial_noi
         capex_pct = _parse_float(row.get('Capex_Percent_of_NOI'))
@@ -292,6 +311,8 @@ def _process_import(portfolio_id, properties_df, loans_df, manual_df):
 
     try:
         for prop in touched_properties:
+            valuation = calculate_property_valuation(prop)
+            prop.year_1_cap_rate = valuation['year1_cap_rate']
             regenerate_property_cash_flows(prop, commit=False)
         for loan in touched_loans:
             regenerate_loan_cash_flows(loan, commit=False)

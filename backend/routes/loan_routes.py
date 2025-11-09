@@ -4,6 +4,15 @@ from models import Loan
 from datetime import datetime
 from services.cash_flow_service import clear_loan_cash_flows, regenerate_loan_cash_flows
 
+ALLOWED_DAY_COUNTS = {'30/360', 'actual/360', 'actual/365'}
+
+
+def _normalize_day_count(value):
+    normalized = (value or '30/360').lower().replace('_', '/')
+    if normalized not in ALLOWED_DAY_COUNTS:
+        return None
+    return normalized
+
 bp = Blueprint('loans', __name__, url_prefix='/api/loans')
 
 @bp.route('', methods=['GET'])
@@ -33,6 +42,9 @@ def create_loan():
         rate_type = (data.get('rate_type') or 'fixed').lower()
         if rate_type not in ('fixed', 'floating'):
             return jsonify({"error": "rate_type must be 'fixed' or 'floating'"}), 400
+        day_count = _normalize_day_count(data.get('interest_day_count'))
+        if day_count is None:
+            return jsonify({"error": "interest_day_count must be one of 30/360, Actual/360, Actual/365"}), 400
 
         interest_rate = data.get('interest_rate')
         if rate_type == 'fixed':
@@ -49,6 +61,7 @@ def create_loan():
             principal_amount=data['principal_amount'],
             interest_rate=interest_rate,
             rate_type=rate_type,
+            interest_day_count=day_count,
             sofr_spread=data.get('sofr_spread', 0.0),
             origination_date=datetime.fromisoformat(data['origination_date']).date(),
             maturity_date=datetime.fromisoformat(data['maturity_date']).date(),
@@ -87,6 +100,11 @@ def update_loan(loan_id):
             loan.rate_type = rate_type
             if rate_type == 'floating' and (loan.interest_rate is None or loan.interest_rate == 0):
                 loan.interest_rate = 0.0
+        if 'interest_day_count' in data:
+            day_count = _normalize_day_count(data.get('interest_day_count'))
+            if day_count is None:
+                return jsonify({"error": "interest_day_count must be one of 30/360, Actual/360, Actual/365"}), 400
+            loan.interest_day_count = day_count
 
         # Update fields if provided
         for field in ['loan_name', 'principal_amount', 'interest_rate', 'payment_frequency',

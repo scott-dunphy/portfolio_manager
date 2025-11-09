@@ -14,6 +14,7 @@ PROPERTY_HEADERS = [
     "Zip_Code",
     "Purchase_Date",
     "Purchase_Price",
+    "Market_Value_Start",
     "Initial_NOI",
     "NOI_Growth_Rate",
     "Capex_Percent_of_NOI",
@@ -21,7 +22,6 @@ PROPERTY_HEADERS = [
     "Ownership_Percent",
     "Exit_Date",
     "Exit_Cap_Rate",
-    "Year_1_Cap_Rate",
     "Building_Size",
     "Valuation_Method",
 ]
@@ -74,7 +74,7 @@ def build_import_template():
     instructions.append(["2. (Optional) Add loans tied to each property in the Loans sheet using Property_ID to link."])
     instructions.append(["3. (Optional) Provide manual Annual NOI/Capex overrides per property/year in the Manual_NOI_Capex sheet."])
     instructions.append(["4. Save the workbook and upload it from the Upload tab, selecting the target portfolio."])
-    instructions.append(["Notes: Dates can be entered in any Excel date format. Percentages should be decimals (0.1 = 10%)."])
+    instructions.append(["Notes: Dates can be entered in any Excel date format. Percentages should be decimals (0.1 = 10%). Market_Value_Start represents the property value at the portfolio analysis start date."])
 
     instructions.column_dimensions["A"].width = 120
 
@@ -91,6 +91,7 @@ def build_import_template():
             "10001",
             "2024-01-01",
             200000000,
+            210000000,
             12000000,
             0.03,
             0.05,
@@ -98,7 +99,6 @@ def build_import_template():
             1.0,
             "2029-06-30",
             0.055,
-            0.05,
             500000,
             "growth",
         ]

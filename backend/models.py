@@ -1,6 +1,7 @@
 from database import db
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSON
+import json
 
 class Portfolio(db.Model):
     __tablename__ = 'portfolios'
@@ -14,6 +15,8 @@ class Portfolio(db.Model):
     fee = db.Column(db.Float, default=0.0)
     beginning_nav = db.Column(db.Float, default=0.0)
     valuation_method = db.Column(db.String(50), default='growth')
+    auto_refinance_enabled = db.Column(db.Boolean, default=False)
+    auto_refinance_spreads = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -34,19 +37,35 @@ class Portfolio(db.Model):
             'fee': self.fee,
             'beginning_nav': self.beginning_nav,
             'valuation_method': self.valuation_method,
+            'auto_refinance_enabled': bool(self.auto_refinance_enabled),
+            'auto_refinance_spreads': self.get_auto_refinance_spreads(),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'property_count': len(self.properties),
             'loan_count': len(self.loans)
         }
 
+    def get_auto_refinance_spreads(self) -> dict:
+        if not self.auto_refinance_spreads:
+            return {}
+        try:
+            data = json.loads(self.auto_refinance_spreads)
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return {}
+
 
 class Property(db.Model):
     __tablename__ = 'properties'
+    __table_args__ = (
+        db.UniqueConstraint('portfolio_id', 'property_id', name='uq_properties_portfolio_property_id'),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     portfolio_id = db.Column(db.Integer, db.ForeignKey('portfolios.id'), nullable=False)
-    property_id = db.Column(db.String(100), unique=True, nullable=False)
+    property_id = db.Column(db.String(100), nullable=False)
     property_name = db.Column(db.String(255), nullable=False)
     property_type = db.Column(db.String(100))
     address = db.Column(db.String(500))
@@ -61,6 +80,7 @@ class Property(db.Model):
     exit_cap_rate = db.Column(db.Float)
     year_1_cap_rate = db.Column(db.Float)
     building_size = db.Column(db.Float)
+    market_value_start = db.Column(db.Float)
 
     # NOI and valuation
     noi_growth_rate = db.Column(db.Float)
@@ -107,6 +127,7 @@ class Property(db.Model):
             'exit_cap_rate': self.exit_cap_rate,
             'year_1_cap_rate': self.year_1_cap_rate,
             'building_size': self.building_size,
+            'market_value_start': self.market_value_start,
             'noi_growth_rate': self.noi_growth_rate,
             'initial_noi': self.initial_noi,
             'valuation_method': self.valuation_method,
@@ -133,6 +154,7 @@ class Loan(db.Model):
     interest_rate = db.Column(db.Float, nullable=False)
     rate_type = db.Column(db.String(20), default='fixed')
     sofr_spread = db.Column(db.Float, default=0.0)
+    interest_day_count = db.Column(db.String(20), default='30/360')
     origination_date = db.Column(db.Date, nullable=False)
     maturity_date = db.Column(db.Date, nullable=False)
     payment_frequency = db.Column(db.String(50), default='monthly')
@@ -158,6 +180,7 @@ class Loan(db.Model):
             'interest_rate': self.interest_rate,
             'rate_type': self.rate_type,
             'sofr_spread': self.sofr_spread,
+            'interest_day_count': self.interest_day_count,
             'origination_date': self.origination_date.isoformat() if self.origination_date else None,
             'maturity_date': self.maturity_date.isoformat() if self.maturity_date else None,
             'payment_frequency': self.payment_frequency,

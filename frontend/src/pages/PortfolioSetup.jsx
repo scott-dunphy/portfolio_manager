@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   Box, Button, Typography, Paper, TextField, Grid, Card, CardContent,
   CardActions, IconButton, Accordion, AccordionSummary, AccordionDetails,
-  Divider, Alert, MenuItem, Chip
+  Divider, Alert, MenuItem, Chip, Switch, FormControlLabel, Table,
+  TableBody, TableCell, TableHead, TableRow
 } from '@mui/material'
 import {
   Add as AddIcon,
@@ -21,6 +22,10 @@ function PortfolioSetup() {
   const [properties, setProperties] = useState([])
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [propertyTypes, setPropertyTypes] = useState([])
+  const [autoRefiEnabled, setAutoRefiEnabled] = useState(false)
+  const [refiSpreads, setRefiSpreads] = useState({})
+  const [savingRefi, setSavingRefi] = useState(false)
 
   // Property form state
   const [showPropertyForm, setShowPropertyForm] = useState(false)
@@ -33,10 +38,12 @@ function PortfolioSetup() {
     state: '',
     zip_code: '',
     purchase_price: '',
+    market_value_start: '',
     purchase_date: '',
     exit_date: '',
     exit_cap_rate: '',
     year_1_cap_rate: '',
+    calculated_year1_cap_rate: '',
     building_size: '',
     noi_growth_rate: '',
     initial_noi: '',
@@ -67,6 +74,18 @@ function PortfolioSetup() {
     fetchPortfolio()
     fetchProperties()
   }, [portfolioId])
+
+  useEffect(() => {
+    if (portfolio) {
+      setAutoRefiEnabled(Boolean(portfolio.auto_refinance_enabled))
+      const spreads = portfolio.auto_refinance_spreads || {}
+      const mapped = Object.entries(spreads).reduce((acc, [key, value]) => {
+        acc[key] = value !== undefined && value !== null ? String(value) : ''
+        return acc
+      }, {})
+      setRefiSpreads(mapped)
+    }
+  }, [portfolio])
 
   useEffect(() => {
     if (showLoanForm && properties.length > 0 && !selectedPropertyForLoan) {
@@ -103,9 +122,19 @@ function PortfolioSetup() {
         })
       )
       setProperties(propertiesWithLoans)
+      loadPropertyTypes()
     } catch (error) {
       console.error('Error fetching properties:', error)
       setProperties([])
+    }
+  }
+
+  const loadPropertyTypes = async () => {
+    try {
+      const response = await propertyAPI.getTypes(portfolioId)
+      setPropertyTypes(response.data || [])
+    } catch (error) {
+      console.error('Error fetching property types:', error)
     }
   }
 
@@ -119,10 +148,12 @@ function PortfolioSetup() {
       state: '',
       zip_code: '',
       purchase_price: '',
+      market_value_start: '',
       purchase_date: '',
       exit_date: '',
       exit_cap_rate: '',
       year_1_cap_rate: '',
+      calculated_year1_cap_rate: '',
       building_size: '',
       noi_growth_rate: '',
       initial_noi: '',
@@ -149,7 +180,7 @@ function PortfolioSetup() {
     })
   }
 
-  const currencyFields = new Set(['purchase_price', 'initial_noi'])
+  const currencyFields = new Set(['purchase_price', 'initial_noi', 'market_value_start'])
   const [focusedPropertyCurrencyField, setFocusedPropertyCurrencyField] = useState(null)
 
   const formatCurrency = (value) => {
@@ -208,10 +239,12 @@ function PortfolioSetup() {
     setSuccess('')
 
     try {
+      const { calculated_year1_cap_rate, ...rest } = propertyFormData
       await propertyAPI.create({
-        ...propertyFormData,
+        ...rest,
         portfolio_id: portfolioId,
         purchase_price: propertyFormData.purchase_price ? Number(propertyFormData.purchase_price) : null,
+        market_value_start: propertyFormData.market_value_start ? Number(propertyFormData.market_value_start) : null,
         initial_noi: propertyFormData.initial_noi ? Number(propertyFormData.initial_noi) : null,
         capex_percent_of_noi:
           propertyFormData.capex_percent_of_noi === '' ? null : Number(propertyFormData.capex_percent_of_noi)
@@ -287,6 +320,44 @@ function PortfolioSetup() {
 
   const handleFinish = () => {
     navigate('/portfolios/' + portfolioId)
+  }
+
+  const propertyTypeOptions = React.useMemo(() => {
+    const unique = new Set(['default', ...propertyTypes])
+    return Array.from(unique)
+  }, [propertyTypes])
+
+  const handleSpreadChange = (type, value) => {
+    setRefiSpreads((prev) => ({
+      ...prev,
+      [type]: value
+    }))
+  }
+
+  const handleSaveRefiSettings = async () => {
+    setSavingRefi(true)
+    setError('')
+    try {
+      const payloadSpreads = {}
+      propertyTypeOptions.forEach((type) => {
+        const rawValue = refiSpreads[type]
+        if (rawValue !== undefined && rawValue !== null && String(rawValue).trim() !== '') {
+          const numeric = Number(rawValue)
+          if (!Number.isNaN(numeric)) {
+            payloadSpreads[type] = numeric
+          }
+        }
+      })
+      await portfolioAPI.update(portfolioId, {
+        auto_refinance_enabled: autoRefiEnabled,
+        auto_refinance_spreads: payloadSpreads
+      })
+      setSuccess('Refinance settings saved.')
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to save refinance settings.')
+    } finally {
+      setSavingRefi(false)
+    }
   }
 
   if (!portfolio) {
@@ -394,6 +465,21 @@ function PortfolioSetup() {
                       size="small"
                     />
                   </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Market Value (Analysis Start)"
+                      name="market_value_start"
+                      type="text"
+                      inputMode="numeric"
+                      value={getPropertyCurrencyValue('market_value_start')}
+                      onFocus={() => setFocusedPropertyCurrencyField('market_value_start')}
+                      onBlur={() => setFocusedPropertyCurrencyField(null)}
+                      onChange={handlePropertyChange}
+                      size="small"
+                      required
+                    />
+                  </Grid>
                   <Grid item xs={12}>
                     <TextField
                       fullWidth
@@ -498,12 +584,16 @@ function PortfolioSetup() {
                   <Grid item xs={12} sm={6}>
                     <TextField
                       fullWidth
-                      label="Year 1 Cap Rate"
+                      label="Year 1 Cap Rate (Calculated)"
                       name="year_1_cap_rate"
                       type="number"
-                      value={propertyFormData.year_1_cap_rate}
-                      onChange={handlePropertyChange}
-                      inputProps={{ step: 0.01 }}
+                      value={
+                        propertyFormData.calculated_year1_cap_rate !== ''
+                          ? propertyFormData.calculated_year1_cap_rate
+                          : propertyFormData.year_1_cap_rate
+                      }
+                      InputProps={{ readOnly: true }}
+                      helperText="Auto-calculated after property is saved"
                       size="small"
                     />
                   </Grid>
@@ -516,6 +606,7 @@ function PortfolioSetup() {
                       value={propertyFormData.exit_cap_rate}
                       onChange={handlePropertyChange}
                       inputProps={{ step: 0.01 }}
+                      required
                       size="small"
                     />
                   </Grid>
@@ -560,6 +651,67 @@ function PortfolioSetup() {
                 </Grid>
               </form>
             )}
+          </Paper>
+
+          <Paper sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" sx={{ mb: 1 }}>Auto Refinance Settings</Typography>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={autoRefiEnabled}
+                  onChange={(e) => setAutoRefiEnabled(e.target.checked)}
+                />
+              }
+              label="Automatically refinance loans at maturity"
+            />
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Refinance loans into 10-year, interest-only debt using the Chatham 10-year forward Treasury curve plus the spreads below.
+            </Typography>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Property Type</TableCell>
+                  <TableCell align="right">Spread (decimal)</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {propertyTypeOptions.map((type) => (
+                  <TableRow key={type}>
+                    <TableCell>
+                      {type === 'default' ? 'Default (fallback)' : type}
+                    </TableCell>
+                    <TableCell align="right">
+                      <TextField
+                        size="small"
+                        type="number"
+                        inputProps={{ step: 0.0001 }}
+                        value={refiSpreads[type] ?? ''}
+                        onChange={(e) => handleSpreadChange(type, e.target.value)}
+                        disabled={!autoRefiEnabled}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {propertyTypeOptions.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={2}>
+                      <Typography variant="body2" color="text.secondary">
+                        Add a property to configure spreads.
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
+              <Button
+                variant="contained"
+                onClick={handleSaveRefiSettings}
+                disabled={savingRefi}
+              >
+                {savingRefi ? 'Saving...' : 'Save Settings'}
+              </Button>
+            </Box>
           </Paper>
 
           <Paper sx={{ p: 3 }}>

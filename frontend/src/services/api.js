@@ -30,7 +30,11 @@ export const propertyAPI = {
   delete: (id) => api.delete(`/properties/${id}`),
   saveManualCashFlows: (propertyId, payload) =>
     api.put(`/properties/${propertyId}/manual-cash-flows`, payload),
-  getManualCashFlows: (propertyId) => api.get(`/properties/${propertyId}/manual-cash-flows`)
+  getManualCashFlows: (propertyId) => api.get(`/properties/${propertyId}/manual-cash-flows`),
+  getTypes: (portfolioId = null) => {
+    const url = portfolioId ? `/properties/types?portfolio_id=${portfolioId}` : '/properties/types'
+    return api.get(url)
+  }
 }
 
 // Loan API
@@ -89,6 +93,13 @@ export const cashFlowAPI = {
   delete: (id) => api.delete(`/cash-flows/${id}`),
   downloadReport: (portfolioId) =>
     api.get(`/cash-flows/export?portfolio_id=${portfolioId}`, { responseType: 'blob' }),
+  getPerformance: (portfolioId, applyOwnership = false) =>
+    api.get(`/cash-flows/performance?portfolio_id=${portfolioId}&apply_ownership=${applyOwnership ? 1 : 0}`),
+}
+
+export const covenantAPI = {
+  getMetrics: (portfolioId, applyOwnership = false) =>
+    api.get(`/covenants?portfolio_id=${portfolioId}&apply_ownership=${applyOwnership ? 1 : 0}`)
 }
 
 // Upload API

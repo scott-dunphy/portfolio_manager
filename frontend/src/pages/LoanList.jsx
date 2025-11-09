@@ -24,6 +24,14 @@ const formatRateLabel = (loan) => {
   return loan.interest_rate != null ? `${(loan.interest_rate * 100).toFixed(2)}%` : '—'
 }
 
+const formatDayCount = (value) => {
+  if (!value) return '30/360'
+  const normalized = value.toLowerCase()
+  if (normalized === 'actual/360') return 'Actual/360'
+  if (normalized === 'actual/365') return 'Actual/365'
+  return '30/360'
+}
+
 function LoanList() {
   const navigate = useNavigate()
   const [loans, setLoans] = useState([])
@@ -75,6 +83,7 @@ function LoanList() {
               <TableCell>Rate</TableCell>
               <TableCell>Origination Date</TableCell>
               <TableCell>Maturity Date</TableCell>
+              <TableCell>Day Count</TableCell>
               <TableCell>Actions</TableCell>
             </TableRow>
           </TableHead>
@@ -87,6 +96,7 @@ function LoanList() {
                 <TableCell>{formatRateLabel(loan)}</TableCell>
                 <TableCell>{loan.origination_date}</TableCell>
                 <TableCell>{loan.maturity_date}</TableCell>
+                <TableCell>{formatDayCount(loan.interest_day_count)}</TableCell>
                 <TableCell>
                   <IconButton size="small" onClick={() => navigate(`/loans/${loan.id}/edit`)}>
                     <EditIcon fontSize="small" />

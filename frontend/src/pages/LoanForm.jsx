@@ -31,7 +31,8 @@ function LoanForm() {
     amortization_period_months: '',
     io_period_months: 0,
     origination_fee: '',
-    exit_fee: ''
+    exit_fee: '',
+    interest_day_count: '30/360'
   })
 
   useEffect(() => {
@@ -87,6 +88,7 @@ function LoanForm() {
         ...prev,
         ...data,
         rate_type: data.rate_type || 'fixed',
+        interest_day_count: data.interest_day_count || '30/360',
         principal_amount: data.principal_amount != null ? String(Math.round(data.principal_amount)) : '',
         origination_fee: data.origination_fee != null ? String(Math.round(data.origination_fee)) : '',
         exit_fee: data.exit_fee != null ? String(Math.round(data.exit_fee)) : '',
@@ -115,6 +117,7 @@ function LoanForm() {
         origination_fee: formData.origination_fee === '' ? 0 : Number(formData.origination_fee),
         exit_fee: formData.exit_fee === '' ? 0 : Number(formData.exit_fee),
         sofr_spread: formData.sofr_spread === '' ? 0 : Number(formData.sofr_spread),
+        interest_day_count: formData.interest_day_count,
         interest_rate:
           formData.rate_type === 'fixed'
             ? Number(formData.interest_rate || 0)
@@ -244,6 +247,21 @@ function LoanForm() {
               >
                 <MenuItem value="fixed">Fixed</MenuItem>
                 <MenuItem value="floating">Floating (SOFR + Spread)</MenuItem>
+              </TextField>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                select
+                label="Day Count Convention"
+                name="interest_day_count"
+                value={formData.interest_day_count}
+                onChange={handleChange}
+                helperText="Controls how interest accrues between payment dates"
+              >
+                <MenuItem value="30/360">30 / 360</MenuItem>
+                <MenuItem value="actual/360">Actual / 360</MenuItem>
+                <MenuItem value="actual/365">Actual / 365</MenuItem>
               </TextField>
             </Grid>
             {formData.rate_type === 'floating' && (

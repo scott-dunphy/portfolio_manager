@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from database import db
 from models import Portfolio
 from datetime import datetime
+import json
 
 bp = Blueprint('portfolios', __name__, url_prefix='/api/portfolios')
 
@@ -38,6 +39,10 @@ def create_portfolio():
             beginning_nav=data.get('beginning_nav', 0.0),
             valuation_method=data.get('valuation_method', 'growth')
         )
+        portfolio.auto_refinance_enabled = bool(data.get('auto_refinance_enabled', False))
+        spreads = data.get('auto_refinance_spreads')
+        if isinstance(spreads, dict):
+            portfolio.auto_refinance_spreads = json.dumps(spreads)
 
         db.session.add(portfolio)
         db.session.commit()
@@ -70,6 +75,10 @@ def update_portfolio(portfolio_id):
             portfolio.beginning_nav = data['beginning_nav']
         if 'valuation_method' in data:
             portfolio.valuation_method = data['valuation_method']
+        if 'auto_refinance_enabled' in data:
+            portfolio.auto_refinance_enabled = bool(data['auto_refinance_enabled'])
+        if 'auto_refinance_spreads' in data and isinstance(data['auto_refinance_spreads'], dict):
+            portfolio.auto_refinance_spreads = json.dumps(data['auto_refinance_spreads'])
 
         portfolio.updated_at = datetime.utcnow()
         db.session.commit()

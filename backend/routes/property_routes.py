@@ -6,6 +6,7 @@ from services.cash_flow_service import (
     clear_property_cash_flows,
     regenerate_property_cash_flows,
 )
+from services.property_valuation_service import calculate_property_valuation
 
 bp = Blueprint('properties', __name__, url_prefix='/api/properties')
 
@@ -57,22 +58,18 @@ def get_properties():
     include_manual = request.args.get('include_manual', '0') == '1'
     include_ownership = request.args.get('include_ownership', '0') == '1'
 
-    results = []
-    for prop in properties:
-        data = prop.to_dict()
-        if not include_manual:
-            data.pop('manual_cash_flows', None)
-        if not include_ownership:
-            data.pop('ownership_events', None)
-        results.append(data)
+    results = [
+        _serialize_property(prop, include_manual=include_manual, include_ownership=include_ownership)
+        for prop in properties
+    ]
 
     return jsonify(results)
 
 @bp.route('/<int:property_id>', methods=['GET'])
 def get_property(property_id):
     """Get a specific property"""
-    property = Property.query.get_or_404(property_id)
-    return jsonify(property.to_dict())
+    property_obj = Property.query.get_or_404(property_id)
+    return jsonify(_serialize_property(property_obj, include_manual=True, include_ownership=True))
 
 @bp.route('', methods=['POST'])
 def create_property():
@@ -81,6 +78,12 @@ def create_property():
 
     try:
         ownership_percent = _normalize_percent(_parse_float(data.get('ownership_percent'), 'ownership_percent'))
+        exit_cap_rate = _parse_float(data.get('exit_cap_rate'), 'exit_cap_rate')
+        if exit_cap_rate is None or exit_cap_rate <= 0:
+            raise ValueError("exit_cap_rate is required and must be greater than 0")
+        market_value_start = _parse_float(data.get('market_value_start'), 'market_value_start')
+        if market_value_start is None or market_value_start <= 0:
+            raise ValueError("market_value_start is required and must be greater than 0")
         property = Property(
             portfolio_id=_parse_int(data['portfolio_id'], 'portfolio_id'),
             property_id=data['property_id'],
@@ -93,21 +96,22 @@ def create_property():
             purchase_price=_parse_float(data.get('purchase_price'), 'purchase_price'),
             purchase_date=datetime.fromisoformat(data['purchase_date']).date() if data.get('purchase_date') else None,
             exit_date=datetime.fromisoformat(data['exit_date']).date() if data.get('exit_date') else None,
-            exit_cap_rate=_parse_float(data.get('exit_cap_rate'), 'exit_cap_rate'),
-            year_1_cap_rate=_parse_float(data.get('year_1_cap_rate'), 'year_1_cap_rate'),
+            exit_cap_rate=exit_cap_rate,
             building_size=_parse_float(data.get('building_size'), 'building_size'),
             noi_growth_rate=_parse_float(data.get('noi_growth_rate'), 'noi_growth_rate'),
             initial_noi=_parse_float(data.get('initial_noi'), 'initial_noi'),
             valuation_method=data.get('valuation_method', 'growth'),
             ownership_percent=ownership_percent,
             capex_percent_of_noi=_parse_float(data.get('capex_percent_of_noi'), 'capex_percent_of_noi'),
-            use_manual_noi_capex=_parse_bool(data.get('use_manual_noi_capex'), False)
+            use_manual_noi_capex=_parse_bool(data.get('use_manual_noi_capex'), False),
+            market_value_start=market_value_start,
         )
 
         db.session.add(property)
         db.session.flush()
 
         _sync_baseline_ownership_event(property)
+        valuation = _recalculate_property_metrics(property)
         db.session.commit()
 
         try:
@@ -120,7 +124,7 @@ def create_property():
         except Exception:
             current_app.logger.exception('Failed to regenerate property cash flows for property %s', property.id)
 
-        return jsonify(property.to_dict()), 201
+        return jsonify(_serialize_property(property, include_manual=True, include_ownership=True, valuation=valuation)), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 400
@@ -136,21 +140,26 @@ def update_property(property_id):
         numeric_fields = {
             'purchase_price',
             'exit_cap_rate',
-            'year_1_cap_rate',
             'building_size',
             'noi_growth_rate',
             'initial_noi',
             'ownership_percent',
-            'capex_percent_of_noi'
+            'capex_percent_of_noi',
+            'market_value_start',
         }
         for field in ['property_name', 'property_type', 'address', 'city', 'state', 'zip_code',
-                      'purchase_price', 'exit_cap_rate', 'year_1_cap_rate', 'building_size',
+                      'purchase_price', 'exit_cap_rate', 'building_size',
                       'noi_growth_rate', 'initial_noi', 'valuation_method', 'ownership_percent',
-                      'capex_percent_of_noi', 'use_manual_noi_capex']:
+                      'capex_percent_of_noi', 'use_manual_noi_capex', 'market_value_start']:
             if field in data:
                 value = data[field]
                 if field in numeric_fields:
                     value = _parse_float(value, field)
+                    if field == 'exit_cap_rate' and (value is None or value <= 0):
+                        raise ValueError("exit_cap_rate must be greater than 0")
+                    if field == 'market_value_start':
+                        if value is None or value <= 0:
+                            raise ValueError("market_value_start must be greater than 0")
                 if field == 'ownership_percent':
                     value = _normalize_percent(value, default=property.ownership_percent or 1.0)
                 if field == 'use_manual_noi_capex':
@@ -164,6 +173,7 @@ def update_property(property_id):
 
         property.updated_at = datetime.utcnow()
         _sync_baseline_ownership_event(property)
+        valuation = _recalculate_property_metrics(property)
         db.session.commit()
 
         try:
@@ -171,7 +181,7 @@ def update_property(property_id):
         except Exception:
             current_app.logger.exception('Failed to regenerate property cash flows for property %s', property.id)
 
-        return jsonify(property.to_dict())
+        return jsonify(_serialize_property(property, include_manual=True, include_ownership=True, valuation=valuation))
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 400
@@ -224,6 +234,7 @@ def upsert_manual_cash_flows(property_id):
             regenerate_property_cash_flows(property)
         except Exception:
             current_app.logger.exception('Failed to regenerate property cash flows for property %s', property.id)
+        _recalculate_property_metrics(property)
 
         db.session.commit()
         return jsonify({
@@ -239,6 +250,36 @@ def upsert_manual_cash_flows(property_id):
 def list_manual_cash_flows(property_id):
     property = Property.query.get_or_404(property_id)
     return jsonify([row.to_dict() for row in property.manual_cash_flows])
+
+
+@bp.route('/types', methods=['GET'])
+def list_property_types():
+    portfolio_id = request.args.get('portfolio_id', type=int)
+    query = db.session.query(Property.property_type).filter(Property.property_type.isnot(None))
+    if portfolio_id:
+        query = query.filter(Property.portfolio_id == portfolio_id)
+    types = sorted({(row[0] or '').strip() for row in query.distinct() if (row[0] or '').strip()})
+    types.append('Unassigned')
+    return jsonify(types)
+
+
+def _serialize_property(property_obj, include_manual=False, include_ownership=False, valuation=None):
+    data = property_obj.to_dict()
+    if not include_manual:
+        data.pop('manual_cash_flows', None)
+    if not include_ownership:
+        data.pop('ownership_events', None)
+    if valuation is None:
+        valuation = calculate_property_valuation(property_obj)
+    data['calculated_year1_cap_rate'] = valuation['year1_cap_rate']
+    data['monthly_market_values'] = valuation['monthly_market_values']
+    return data
+
+
+def _recalculate_property_metrics(property_obj):
+    valuation = calculate_property_valuation(property_obj)
+    property_obj.year_1_cap_rate = valuation['year1_cap_rate']
+    return valuation
 
 
 def _sync_baseline_ownership_event(property_obj: Property):

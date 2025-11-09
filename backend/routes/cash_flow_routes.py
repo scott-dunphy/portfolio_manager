@@ -4,6 +4,7 @@ from models import CashFlow, Loan
 from datetime import datetime, date
 from services.sofr_client import get_forward_rate
 from services.cash_flow_report_service import build_cash_flow_report
+from services.performance_service import build_quarterly_performance
 
 bp = Blueprint('cash_flows', __name__, url_prefix='/api/cash-flows')
 
@@ -69,6 +70,22 @@ def export_cash_flows():
         download_name=filename,
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
+
+
+@bp.route('/performance', methods=['GET'])
+def get_quarterly_performance():
+    portfolio_id = request.args.get('portfolio_id', type=int)
+    if not portfolio_id:
+        return jsonify({"error": "portfolio_id is required"}), 400
+
+    apply_ownership = request.args.get('apply_ownership', '0') == '1'
+
+    try:
+        result = build_quarterly_performance(portfolio_id, apply_ownership=apply_ownership)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(result)
 
 @bp.route('/<int:cash_flow_id>', methods=['GET'])
 def get_cash_flow(cash_flow_id):

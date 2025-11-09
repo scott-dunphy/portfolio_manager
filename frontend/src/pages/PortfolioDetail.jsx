@@ -37,7 +37,8 @@ import {
   loanAPI,
   preferredEquityAPI,
   cashFlowAPI,
-  propertyOwnershipAPI
+  propertyOwnershipAPI,
+  covenantAPI
 } from '../services/api'
 import {
   formatCurrencyDisplay,
@@ -56,6 +57,36 @@ function PortfolioDetail() {
   const [cashFlows, setCashFlows] = useState([])
   const [cashFlowsLoading, setCashFlowsLoading] = useState(false)
   const [cashFlowsLoaded, setCashFlowsLoaded] = useState(false)
+  const [performanceData, setPerformanceData] = useState(null)
+  const [performanceLoading, setPerformanceLoading] = useState(false)
+  const [performanceLoaded, setPerformanceLoaded] = useState(false)
+  const [performanceError, setPerformanceError] = useState('')
+  const [performanceExpanded, setPerformanceExpanded] = useState({})
+  const [performanceOwnership, setPerformanceOwnership] = useState(false)
+  const [covenantData, setCovenantData] = useState(null)
+  const [covenantLoading, setCovenantLoading] = useState(false)
+  const [covenantLoaded, setCovenantLoaded] = useState(false)
+  const [covenantError, setCovenantError] = useState('')
+  const [covenantExpanded, setCovenantExpanded] = useState({})
+  const [covenantOwnership, setCovenantOwnership] = useState(false)
+  const propertyValuationMap = useMemo(() => {
+    const map = new Map()
+    properties.forEach((property) => {
+      const entries = ((property.monthly_market_values || []).slice() || [])
+        .filter((entry) => entry?.date)
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .map((entry, idx) => ({
+          date: entry.date,
+          market_value: entry.market_value ?? null,
+          forward_noi_12m: entry.forward_noi_12m,
+          cap_rate: entry.cap_rate,
+          _index: idx
+        }))
+      const byDate = new Map(entries.map((entry) => [entry.date, entry]))
+      map.set(property.id, { entries, byDate })
+    })
+    return map
+  }, [properties])
   const [tab, setTab] = useState(0)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -93,6 +124,26 @@ function PortfolioDetail() {
     }
   }, [tab, cashFlowsLoaded, cashFlowsLoading])
 
+  useEffect(() => {
+    if (tab === 4 && !performanceLoaded && !performanceLoading) {
+      loadPerformance()
+    }
+  }, [tab, performanceLoaded, performanceLoading])
+
+  useEffect(() => {
+    if (tab === 5 && !covenantLoaded && !covenantLoading) {
+      loadCovenants()
+    }
+  }, [tab, covenantLoaded, covenantLoading])
+
+  useEffect(() => {
+    setPerformanceExpanded({})
+  }, [performanceData])
+
+  useEffect(() => {
+    setCovenantExpanded({})
+  }, [covenantData])
+
   const fetchPortfolioData = async () => {
     try {
       const [portfolioRes, propertiesRes, loansRes, prefEquityRes] = await Promise.all([
@@ -108,6 +159,9 @@ function PortfolioDetail() {
       setPreferredEquities(prefEquityRes.data)
       setCashFlows([])
       setCashFlowsLoaded(false)
+      setPerformanceData(null)
+      setPerformanceLoaded(false)
+      setPerformanceError('')
 
       const eventsState = {}
       propertiesData.forEach((property) => {
@@ -652,6 +706,62 @@ function PortfolioDetail() {
     }
   }
 
+  const loadPerformance = async (ownershipFlag = performanceOwnership) => {
+    setPerformanceLoading(true)
+    setPerformanceError('')
+    try {
+      const response = await cashFlowAPI.getPerformance(id, ownershipFlag)
+      setPerformanceData(response.data || { quarters: [] })
+      setPerformanceLoaded(true)
+    } catch (err) {
+      setPerformanceError(err.response?.data?.error || err.message || 'Failed to load performance.')
+    } finally {
+      setPerformanceLoading(false)
+    }
+  }
+
+  const togglePerformanceRow = (label) => {
+    setPerformanceExpanded((prev) => ({
+      ...prev,
+      [label]: !prev[label]
+    }))
+  }
+
+  const handlePerformanceOwnershipToggle = async (event) => {
+    const nextValue = event.target.checked
+    setPerformanceOwnership(nextValue)
+    setPerformanceLoaded(false)
+    await loadPerformance(nextValue)
+  }
+
+  const loadCovenants = async (ownershipFlag = covenantOwnership) => {
+    setCovenantLoading(true)
+    setCovenantError('')
+    try {
+      const response = await covenantAPI.getMetrics(id, ownershipFlag)
+      setCovenantData(response.data || { months: [] })
+      setCovenantLoaded(true)
+    } catch (err) {
+      setCovenantError(err.response?.data?.error || err.message || 'Failed to load covenants.')
+    } finally {
+      setCovenantLoading(false)
+    }
+  }
+
+  const toggleCovenantRow = (label) => {
+    setCovenantExpanded((prev) => ({
+      ...prev,
+      [label]: !prev[label]
+    }))
+  }
+
+  const handleCovenantOwnershipToggle = async (event) => {
+    const nextValue = event.target.checked
+    setCovenantOwnership(nextValue)
+    setCovenantLoaded(false)
+    await loadCovenants(nextValue)
+  }
+
   const handleDownloadCashFlowReport = async () => {
     setDownloadingReport(true)
     try {
@@ -724,6 +834,35 @@ function PortfolioDetail() {
     }
   }
 
+  const getPropertyValuationSnapshot = React.useCallback(
+    (propertyId, isoDate) => {
+      if (!propertyId || !isoDate) {
+        return { current: null, prior: null }
+      }
+      const state = propertyValuationMap.get(propertyId)
+      if (!state) {
+        return { current: null, prior: null }
+      }
+      let current = state.byDate.get(isoDate)
+      let index = current?._index
+      if (!current) {
+        for (let i = state.entries.length - 1; i >= 0; i -= 1) {
+          if (state.entries[i].date <= isoDate) {
+            current = state.entries[i]
+            index = i
+            break
+          }
+        }
+      }
+      if (!current) {
+        return { current: null, prior: null }
+      }
+      const prior = index > 0 ? state.entries[index - 1] : null
+      return { current, prior }
+    },
+    [propertyValuationMap]
+  )
+
   const aggregatedByDate = useMemo(() => {
     const byDate = new Map()
     cashFlows.forEach((cf) => {
@@ -774,12 +913,27 @@ function PortfolioDetail() {
     let runningBeginning = portfolioBeginning
 
     return sorted.map((entry) => {
-      const propertiesArray = Array.from(entry.properties.values()).map((propertyEntry) => ({
-        ...propertyEntry,
-        flows: propertyEntry.flows
-          .slice()
-          .sort((a, b) => (a.cash_flow_type || '').localeCompare(b.cash_flow_type || ''))
-      }))
+      const propertiesArray = Array.from(entry.properties.values()).map((propertyEntry) => {
+        const propertyId = propertyEntry.propertyId
+        const valuations = propertyId ? getPropertyValuationSnapshot(propertyId, entry.date) : { current: null, prior: null }
+        const currentValue = valuations.current?.market_value ?? null
+        const priorValue = valuations.prior?.market_value ?? null
+        const capexRaw = propertyEntry.typeTotals['property_capex'] || 0
+        const capexOutlay = -capexRaw
+        const appreciation =
+          currentValue != null && priorValue != null
+            ? currentValue - priorValue - (capexOutlay || 0)
+            : null
+        return {
+          ...propertyEntry,
+          marketValueCurrent: currentValue,
+          marketValuePrior: priorValue,
+          appreciation,
+          flows: propertyEntry.flows
+            .slice()
+            .sort((a, b) => (a.cash_flow_type || '').localeCompare(b.cash_flow_type || ''))
+        }
+      })
 
       propertiesArray.sort((a, b) => {
         const aRecord = propertyMap.get(a.propertyId)
@@ -795,18 +949,42 @@ function PortfolioDetail() {
         return nameA.localeCompare(nameB)
       })
 
+      const totalMarketCurrent = propertiesArray.reduce(
+        (sum, item) => sum + (item.marketValueCurrent ?? 0),
+        0
+      )
+      const totalMarketPrior = propertiesArray.reduce(
+        (sum, item) => sum + (item.marketValuePrior ?? 0),
+        0
+      )
+      const totalAppreciation = propertiesArray.reduce(
+        (sum, item) => sum + (item.appreciation ?? 0),
+        0
+      )
+
       const entryWithBalances = {
         ...entry,
         properties: propertiesArray,
         beginning_cash: runningBeginning,
-        ending_cash: runningBeginning + entry.total
+        ending_cash: runningBeginning + entry.total,
+        market_value_current: propertiesArray.length ? totalMarketCurrent : null,
+        market_value_prior: propertiesArray.length ? totalMarketPrior : null,
+        appreciation_total: propertiesArray.length ? totalAppreciation : null
       }
 
       runningBeginning = entryWithBalances.ending_cash
 
       return entryWithBalances
     })
-  }, [cashFlows, propertyMap, applyOwnership, ownershipEvents, getOwnershipPercentForDate, portfolio])
+  }, [
+    cashFlows,
+    propertyMap,
+    applyOwnership,
+    ownershipEvents,
+    getOwnershipPercentForDate,
+    portfolio,
+    getPropertyValuationSnapshot
+  ])
 
   const getLatestOwnershipPercent = (propertyId) => {
     const events = ownershipEvents[propertyId]?.data
@@ -968,20 +1146,47 @@ function PortfolioDetail() {
     return `$${formatted}`
   }
 
+  const formatDisplayDate = (value) => {
+    if (!value) return '—'
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) {
+      return value
+    }
+    return parsed.toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    })
+  }
+
+  const formatDayCount = (value) => {
+    if (!value) return '30/360'
+    const normalized = value.toLowerCase()
+    if (normalized === 'actual/360') return 'Actual/360'
+    if (normalized === 'actual/365') return 'Actual/365'
+    return '30/360'
+  }
   const formatLoanRateLabel = (loan) => {
     if (!loan) return '—'
+    const dayCountLabel = formatDayCount(loan.interest_day_count)
+    let rateLabel = '—'
     if (loan.rate_type === 'floating') {
       const spread = loan.sofr_spread != null ? (loan.sofr_spread * 100).toFixed(2) : '0.00'
-      return `SOFR + ${spread}%`
+      rateLabel = `SOFR + ${spread}%`
+    } else if (loan.interest_rate != null) {
+      rateLabel = `${(loan.interest_rate * 100).toFixed(2)}%`
     }
-    if (loan.interest_rate != null) {
-      return `${(loan.interest_rate * 100).toFixed(2)}%`
-    }
-    return '—'
+    return `${rateLabel} · ${dayCountLabel}`
   }
   const formatPercent = (value) => {
     if (value == null || value === '') return '—'
     return `${(Number(value) * 100).toFixed(2)}%`
+  }
+  const formatRatio = (value, digits = 2) => {
+    if (value == null || value === '') return '—'
+    const num = Number(value)
+    if (!Number.isFinite(num)) return '—'
+    return num.toFixed(digits)
   }
 
   const renderFloatingRate = (flow) => {
@@ -1064,6 +1269,8 @@ function PortfolioDetail() {
           <Tab label={`Loans (${loans.length})`} />
           <Tab label={`Preferred Equity (${preferredEquities.length})`} />
           <Tab label={`Cash Flows (${cashFlowsLoaded ? cashFlows.length : '—'})`} />
+          <Tab label="Performance" />
+          <Tab label="Covenants" />
         </Tabs>
 
         {tab === 0 && (
@@ -1136,6 +1343,22 @@ function PortfolioDetail() {
                               Initial NOI
                             </Typography>
                             <Typography>{formatCurrency(property.initial_noi)}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Market Value (Analysis Start)
+                            </Typography>
+                            <Typography>{formatCurrency(property.market_value_start)}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Year 1 Cap Rate
+                            </Typography>
+                            <Typography>
+                              {formatPercent(
+                                property.calculated_year1_cap_rate ?? property.year_1_cap_rate
+                              )}
+                            </Typography>
                           </Grid>
                           <Grid item xs={12} sm={6} md={3}>
                             <Typography variant="subtitle2" color="text.secondary">
@@ -1225,6 +1448,36 @@ function PortfolioDetail() {
                         </Collapse>
 
                         <Divider sx={{ my: 2 }} />
+
+                        {property.monthly_market_values && property.monthly_market_values.length > 0 && (
+                          <Box sx={{ mb: 2 }}>
+                            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                              Market Value Projection
+                            </Typography>
+                            <TableContainer sx={{ maxHeight: 260 }}>
+                              <Table size="small" stickyHeader>
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell>Date</TableCell>
+                                    <TableCell align="right">Forward NOI (12m)</TableCell>
+                                    <TableCell align="right">Cap Rate</TableCell>
+                                    <TableCell align="right">Market Value</TableCell>
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {property.monthly_market_values.map((mv) => (
+                                    <TableRow key={`${property.id}-${mv.date}`}>
+                                      <TableCell>{mv.date}</TableCell>
+                                      <TableCell align="right">{formatCurrency(mv.forward_noi_12m)}</TableCell>
+                                      <TableCell align="right">{formatPercent(mv.cap_rate)}</TableCell>
+                                      <TableCell align="right">{formatCurrency(mv.market_value)}</TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </TableContainer>
+                          </Box>
+                        )}
 
                         <Box sx={{ mb: 2 }}>
                           <Typography variant="subtitle2" sx={{ mb: 1 }}>
@@ -1850,8 +2103,24 @@ function PortfolioDetail() {
                     label="Apply ownership share"
                   />
                 </Box>
-                <TableContainer>
-                  <Table size="small">
+                <TableContainer
+                  sx={{
+                    maxHeight: '70vh',
+                    position: 'relative',
+                    borderRadius: 3,
+                    border: '1px solid rgba(15,23,42,0.08)'
+                  }}
+                >
+                  <Table
+                    size="small"
+                    stickyHeader
+                    sx={{
+                      '& .MuiTableCell-stickyHeader': {
+                        backgroundColor: 'background.paper',
+                        zIndex: 2
+                      }
+                    }}
+                  >
                   <TableHead>
                     <TableRow>
                       <TableCell />
@@ -1859,6 +2128,9 @@ function PortfolioDetail() {
                       <TableCell align="right">Beginning Cash</TableCell>
                       <TableCell align="right">Total</TableCell>
                       <TableCell align="right">Ending Cash</TableCell>
+                      <TableCell align="right">Market Value (Current)</TableCell>
+                      <TableCell align="right">Market Value (Prior)</TableCell>
+                      <TableCell align="right">Appreciation</TableCell>
                       {cashFlowTypes.map((type) => (
                         <TableCell align="right" key={`portfolio-type-${type}`}>
                           {type}
@@ -1883,6 +2155,9 @@ function PortfolioDetail() {
                             <TableCell align="right">{formatCurrency(entry.beginning_cash)}</TableCell>
                             <TableCell align="right">{formatCurrency(entry.total)}</TableCell>
                             <TableCell align="right">{formatCurrency(entry.ending_cash)}</TableCell>
+                            <TableCell align="right">{formatCurrency(entry.market_value_current)}</TableCell>
+                            <TableCell align="right">{formatCurrency(entry.market_value_prior)}</TableCell>
+                            <TableCell align="right">{formatCurrency(entry.appreciation_total)}</TableCell>
                             {cashFlowTypes.map((type) => (
                               <TableCell align="right" key={`${dateKey}-${type}`}>
                                 {formatCurrency(entry.typeTotals[type] || 0)}
@@ -1891,7 +2166,7 @@ function PortfolioDetail() {
                           </TableRow>
                           <TableRow>
                             <TableCell
-                              colSpan={5 + cashFlowTypes.length}
+                              colSpan={8 + cashFlowTypes.length}
                               sx={{ py: 0, border: 0 }}
                             >
                               <Collapse in={open} timeout="auto" unmountOnExit>
@@ -1907,6 +2182,9 @@ function PortfolioDetail() {
                                           <TableCell />
                                           <TableCell>Property</TableCell>
                                           <TableCell align="right">Total</TableCell>
+                                          <TableCell align="right">Market Value (Current)</TableCell>
+                                          <TableCell align="right">Market Value (Prior)</TableCell>
+                                          <TableCell align="right">Appreciation</TableCell>
                                           {cashFlowTypes.map((type) => (
                                             <TableCell align="right" key={`property-header-${type}`}>
                                               {type}
@@ -1945,6 +2223,15 @@ function PortfolioDetail() {
                                                 <TableCell align="right">
                                                   {formatCurrency(propertyEntry.total)}
                                                 </TableCell>
+                                                <TableCell align="right">
+                                                  {formatCurrency(propertyEntry.marketValueCurrent)}
+                                                </TableCell>
+                                                <TableCell align="right">
+                                                  {formatCurrency(propertyEntry.marketValuePrior)}
+                                                </TableCell>
+                                                <TableCell align="right">
+                                                  {formatCurrency(propertyEntry.appreciation)}
+                                                </TableCell>
                                                 {cashFlowTypes.map((type) => (
                                                   <TableCell
                                                     align="right"
@@ -1956,7 +2243,7 @@ function PortfolioDetail() {
                                               </TableRow>
                                               <TableRow>
                                                 <TableCell
-                                                  colSpan={3 + cashFlowTypes.length}
+                                                  colSpan={6 + cashFlowTypes.length}
                                                   sx={{ py: 0, border: 0 }}
                                                 >
                                                   <Collapse in={propOpen} timeout="auto" unmountOnExit>
@@ -2039,6 +2326,301 @@ function PortfolioDetail() {
                   </Table>
                 </TableContainer>
               </>
+            )}
+          </Box>
+        )}
+
+        {tab === 4 && (
+          <Box sx={{ p: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={performanceOwnership}
+                    onChange={handlePerformanceOwnershipToggle}
+                  />
+                }
+                label="Apply ownership share"
+              />
+              <Button
+                variant="outlined"
+                onClick={loadPerformance}
+                disabled={performanceLoading}
+              >
+                {performanceLoading
+                  ? 'Calculating…'
+                  : performanceLoaded
+                  ? 'Refresh'
+                  : 'Load Performance'}
+              </Button>
+            </Box>
+            {performanceError && (
+              <Alert
+                severity="error"
+                sx={{ mb: 2 }}
+                onClose={() => setPerformanceError('')}
+              >
+                {performanceError}
+              </Alert>
+            )}
+            {performanceLoading && !performanceLoaded ? (
+              <Typography variant="body2" color="text.secondary">
+                Calculating quarterly performance…
+              </Typography>
+            ) : (
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                  Quarterly Performance (Time-Weighted Return)
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Denominator = Beginning NAV + Capital Calls - Redemptions. Net income equals NOI minus Interest Expense. Appreciation reflects property-level market value changes net of capex.
+                </Typography>
+                {performanceLoading && performanceLoaded && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Refreshing performance…
+                  </Typography>
+                )}
+                {!performanceData || (performanceData.quarters || []).length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    No performance periods were found within the analysis window.
+                  </Typography>
+                ) : (
+                  <TableContainer>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell />
+                          <TableCell>Quarter</TableCell>
+                          <TableCell>Quarter End</TableCell>
+                          <TableCell align="right">Beginning NAV</TableCell>
+                          <TableCell align="right">Capital Calls</TableCell>
+                          <TableCell align="right">Redemptions</TableCell>
+                          <TableCell align="right">TWR Denominator</TableCell>
+                          <TableCell align="right">Net Income</TableCell>
+                          <TableCell align="right">Appreciation</TableCell>
+                          <TableCell align="right">Total Return</TableCell>
+                          <TableCell align="right">Ending NAV</TableCell>
+                          <TableCell align="right">Quarterly TWR</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {(performanceData?.quarters || []).map((row) => {
+                          const expanded = !!performanceExpanded[row.label]
+                          return (
+                            <React.Fragment key={`${row.label}-${row.start_date}`}>
+                              <TableRow>
+                                <TableCell>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => togglePerformanceRow(row.label)}
+                                  >
+                                    {expanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                                  </IconButton>
+                                </TableCell>
+                                <TableCell>{row.label}</TableCell>
+                                <TableCell>{formatDisplayDate(row.end_date)}</TableCell>
+                                <TableCell align="right">{formatCurrency(row.beginning_nav)}</TableCell>
+                                <TableCell align="right">{formatCurrency(row.capital_calls)}</TableCell>
+                                <TableCell align="right">{formatCurrency(row.redemptions)}</TableCell>
+                                <TableCell align="right">{formatCurrency(row.denominator)}</TableCell>
+                                <TableCell align="right">{formatCurrency(row.income)}</TableCell>
+                                <TableCell align="right">{formatCurrency(row.appreciation)}</TableCell>
+                                <TableCell align="right">{formatCurrency(row.total_return)}</TableCell>
+                                <TableCell align="right">{formatCurrency(row.ending_nav)}</TableCell>
+                                <TableCell align="right">{formatPercent(row.twr)}</TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell colSpan={12} sx={{ p: 0, border: 0 }}>
+                                  <Collapse in={expanded} timeout="auto" unmountOnExit>
+                                    <Box sx={{ m: 2 }}>
+                                      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                                        Property Contribution
+                                      </Typography>
+                                      {!row.property_details || row.property_details.length === 0 ? (
+                                        <Typography variant="body2" color="text.secondary">
+                                          No property valuation data for this quarter.
+                                        </Typography>
+                                      ) : (
+                                        <Table size="small">
+                                          <TableHead>
+                                            <TableRow>
+                                              <TableCell>Property</TableCell>
+                                              <TableCell align="right">Beginning Value</TableCell>
+                                              <TableCell align="right">Ending Value</TableCell>
+                                              <TableCell align="right">Capex</TableCell>
+                                              <TableCell align="right">Appreciation</TableCell>
+                                              <TableCell align="right">Net Income</TableCell>
+                                              <TableCell align="right">Quarterly TWR</TableCell>
+                                            </TableRow>
+                                          </TableHead>
+                                          <TableBody>
+                                            {row.property_details.map((detail) => (
+                                              <TableRow key={`${row.label}-${detail.property_id}`}>
+                                                <TableCell>{detail.property_name}</TableCell>
+                                                <TableCell align="right">
+                                                  {formatCurrency(detail.begin_value)}
+                                                </TableCell>
+                                                <TableCell align="right">
+                                                  {formatCurrency(detail.end_value)}
+                                                </TableCell>
+                                                <TableCell align="right">
+                                                  {formatCurrency(detail.capex)}
+                                                </TableCell>
+                                                <TableCell align="right">
+                                                  {formatCurrency(detail.appreciation)}
+                                                </TableCell>
+                                                <TableCell align="right">
+                                                  {formatCurrency(detail.net_income)}
+                                                </TableCell>
+                                                <TableCell align="right">
+                                                  {formatPercent(detail.twr)}
+                                                </TableCell>
+                                              </TableRow>
+                                            ))}
+                                          </TableBody>
+                                        </Table>
+                                      )}
+                                    </Box>
+                                  </Collapse>
+                                </TableCell>
+                              </TableRow>
+                            </React.Fragment>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+              </Paper>
+            )}
+          </Box>
+        )}
+
+        {tab === 5 && (
+          <Box sx={{ p: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, gap: 2, flexWrap: 'wrap' }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={covenantOwnership}
+                    onChange={handleCovenantOwnershipToggle}
+                  />
+                }
+                label="Apply ownership share"
+              />
+              <Button
+                variant="outlined"
+                onClick={() => loadCovenants()}
+                disabled={covenantLoading}
+              >
+                {covenantLoading
+                  ? 'Calculating…'
+                  : covenantLoaded
+                  ? 'Refresh'
+                  : 'Load Covenants'}
+              </Button>
+            </Box>
+            {covenantError && (
+              <Alert severity="error" sx={{ mb: 2 }} onClose={() => setCovenantError('')}>
+                {covenantError}
+              </Alert>
+            )}
+            {covenantLoading && !covenantLoaded ? (
+              <Typography variant="body2" color="text.secondary">
+                Calculating covenant metrics…
+              </Typography>
+            ) : !covenantData || (covenantData.months || []).length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No covenant data available for this portfolio.
+              </Typography>
+            ) : (
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell />
+                      <TableCell>Month</TableCell>
+                      <TableCell align="right">Fund DSCR (TTM)</TableCell>
+                      <TableCell align="right">Fund LTV</TableCell>
+                      <TableCell align="right">Debt Yield</TableCell>
+                      <TableCell align="right">TTM NOI</TableCell>
+                      <TableCell align="right">TTM Debt Service</TableCell>
+                      <TableCell align="right">Outstanding Debt</TableCell>
+                      <TableCell align="right">Market Value</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {(covenantData?.months || []).map((monthEntry) => {
+                      const expanded = !!covenantExpanded[monthEntry.date]
+                      const fund = monthEntry.fund || {}
+                      return (
+                        <React.Fragment key={monthEntry.date}>
+                          <TableRow>
+                            <TableCell>
+                              <IconButton
+                                size="small"
+                                onClick={() => toggleCovenantRow(monthEntry.date)}
+                              >
+                                {expanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                              </IconButton>
+                            </TableCell>
+                            <TableCell>{monthEntry.date}</TableCell>
+                            <TableCell align="right">{formatRatio(fund.dscr)}</TableCell>
+                            <TableCell align="right">{formatPercent(fund.ltv)}</TableCell>
+                            <TableCell align="right">{formatPercent(fund.debt_yield)}</TableCell>
+                            <TableCell align="right">{formatCurrency(fund.ttm_noi)}</TableCell>
+                            <TableCell align="right">{formatCurrency(fund.ttm_debt_service)}</TableCell>
+                            <TableCell align="right">{formatCurrency(fund.outstanding_debt)}</TableCell>
+                            <TableCell align="right">{formatCurrency(fund.market_value)}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell colSpan={10} sx={{ p: 0, border: 0 }}>
+                              <Collapse in={expanded} timeout="auto" unmountOnExit>
+                                <Box sx={{ m: 2 }}>
+                                  {monthEntry.properties && monthEntry.properties.length > 0 ? (
+                                    <Table size="small">
+                                      <TableHead>
+                                        <TableRow>
+                                          <TableCell>Property</TableCell>
+                                          <TableCell align="right">DSCR</TableCell>
+                                          <TableCell align="right">LTV</TableCell>
+                                          <TableCell align="right">Debt Yield</TableCell>
+                                          <TableCell align="right">TTM NOI</TableCell>
+                                          <TableCell align="right">TTM Debt Service</TableCell>
+                                          <TableCell align="right">Outstanding Debt</TableCell>
+                                          <TableCell align="right">Market Value</TableCell>
+                                        </TableRow>
+                                      </TableHead>
+                                      <TableBody>
+                                        {monthEntry.properties.map((property) => (
+                                          <TableRow key={`${monthEntry.date}-${property.property_id}`}>
+                                            <TableCell>{property.property_name}</TableCell>
+                                            <TableCell align="right">{formatRatio(property.dscr)}</TableCell>
+                                            <TableCell align="right">{formatPercent(property.ltv)}</TableCell>
+                                            <TableCell align="right">{formatPercent(property.debt_yield)}</TableCell>
+                                            <TableCell align="right">{formatCurrency(property.ttm_noi)}</TableCell>
+                                            <TableCell align="right">{formatCurrency(property.ttm_debt_service)}</TableCell>
+                                            <TableCell align="right">{formatCurrency(property.outstanding_debt)}</TableCell>
+                                            <TableCell align="right">{formatCurrency(property.market_value)}</TableCell>
+                                          </TableRow>
+                                        ))}
+                                      </TableBody>
+                                    </Table>
+                                  ) : (
+                                    <Typography variant="body2" color="text.secondary">
+                                      No property-level data for this month.
+                                    </Typography>
+                                  )}
+                                </Box>
+                              </Collapse>
+                            </TableCell>
+                          </TableRow>
+                        </React.Fragment>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
             )}
           </Box>
         )}
