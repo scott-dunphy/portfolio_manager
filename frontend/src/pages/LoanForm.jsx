@@ -66,7 +66,7 @@ function LoanForm() {
     }
   }
 
-  const currencyFields = new Set(['principal_amount', 'origination_fee', 'exit_fee'])
+  const currencyFields = new Set(['principal_amount', 'exit_fee'])
   const [focusedCurrencyField, setFocusedCurrencyField] = useState(null)
 
   const getCurrencyFieldValue = (name) => {
@@ -90,7 +90,7 @@ function LoanForm() {
         rate_type: data.rate_type || 'fixed',
         interest_day_count: data.interest_day_count || '30/360',
         principal_amount: data.principal_amount != null ? String(Math.round(data.principal_amount)) : '',
-        origination_fee: data.origination_fee != null ? String(Math.round(data.origination_fee)) : '',
+        origination_fee: data.origination_fee != null ? String(data.origination_fee) : '',
         exit_fee: data.exit_fee != null ? String(Math.round(data.exit_fee)) : '',
         sofr_spread: data.sofr_spread != null ? String(data.sofr_spread) : ''
       }))
@@ -349,14 +349,13 @@ function LoanForm() {
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
-                label="Origination Fee"
+                type="number"
+                inputProps={{ step: 0.0001, min: 0 }}
+                label="Origination Fee (% of principal, decimal)"
                 name="origination_fee"
-                type="text"
-                inputMode="numeric"
-                value={getCurrencyFieldValue('origination_fee')}
-                onFocus={() => handleCurrencyFocus('origination_fee')}
-                onBlur={handleCurrencyBlur}
+                value={formData.origination_fee}
                 onChange={handleChange}
+                helperText="Enter as decimal (e.g. 0.01 for 1%)"
               />
             </Grid>
             <Grid item xs={12} sm={6}>

@@ -93,6 +93,8 @@ export const cashFlowAPI = {
   delete: (id) => api.delete(`/cash-flows/${id}`),
   downloadReport: (portfolioId) =>
     api.get(`/cash-flows/export?portfolio_id=${portfolioId}`, { responseType: 'blob' }),
+  downloadReportWithProperties: (portfolioId) =>
+    api.get(`/cash-flows/export?portfolio_id=${portfolioId}`, { responseType: 'blob' }),
   getPerformance: (portfolioId, applyOwnership = false) =>
     api.get(`/cash-flows/performance?portfolio_id=${portfolioId}&apply_ownership=${applyOwnership ? 1 : 0}`),
 }
@@ -100,6 +102,14 @@ export const cashFlowAPI = {
 export const covenantAPI = {
   getMetrics: (portfolioId, applyOwnership = false) =>
     api.get(`/covenants?portfolio_id=${portfolioId}&apply_ownership=${applyOwnership ? 1 : 0}`)
+}
+
+// Property Type Exposure API
+export const propertyTypeExposureAPI = {
+  getExposure: (portfolioId) =>
+    api.get(`/portfolios/${portfolioId}/property-type-exposure`),
+  downloadExcel: (portfolioId) =>
+    api.get(`/portfolios/${portfolioId}/property-type-exposure/export`, { responseType: 'blob' })
 }
 
 // Upload API

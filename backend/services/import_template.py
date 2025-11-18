@@ -44,6 +44,13 @@ LOAN_HEADERS = [
     "Exit_Fee",
 ]
 
+LOAN_CASH_FLOW_HEADERS = [
+    "Loan_ID",
+    "Payment_Date",
+    "Interest_Amount",
+    "Principal_Amount",
+]
+
 MANUAL_HEADERS = [
     "Property_ID",
     "Year",
@@ -73,7 +80,8 @@ def build_import_template():
     instructions.append(["1. Fill out the Properties sheet (Property_ID is required and must be unique per portfolio)."])
     instructions.append(["2. (Optional) Add loans tied to each property in the Loans sheet using Property_ID to link."])
     instructions.append(["3. (Optional) Provide manual Annual NOI/Capex overrides per property/year in the Manual_NOI_Capex sheet."])
-    instructions.append(["4. Save the workbook and upload it from the Upload tab, selecting the target portfolio."])
+    instructions.append(["4. (Optional) Provide actual loan cash flows for specific months in the Loan_Cash_Flows sheet. Only enter the months that should override calculated principal or interest."])
+    instructions.append(["5. Save the workbook and upload it from the Upload tab, selecting the target portfolio."])
     instructions.append(["Notes: Dates can be entered in any Excel date format. Percentages should be decimals (0.1 = 10%). Market_Value_Start represents the property value at the portfolio analysis start date."])
 
     instructions.column_dimensions["A"].width = 120
@@ -133,6 +141,12 @@ def build_import_template():
     ws_manual.append(["PROP-1001", 2024, "annual", "", 12000000, 600000])
     ws_manual.append(["PROP-1001", 2024, "monthly", 1, 1000000, 50000])
     _auto_width(ws_manual)
+
+    ws_loan_cf = wb.create_sheet("Loan_Cash_Flows")
+    ws_loan_cf.append(LOAN_CASH_FLOW_HEADERS)
+    ws_loan_cf.append(["LOAN-1", "2024-03-31", 500000, 250000])
+    ws_loan_cf.append(["LOAN-1", "2024-04-30", 480000, ""])
+    _auto_width(ws_loan_cf)
 
     stream = BytesIO()
     wb.save(stream)

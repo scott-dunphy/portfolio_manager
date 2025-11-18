@@ -15,6 +15,7 @@ import PropertyForm from './pages/PropertyForm'
 import LoanList from './pages/LoanList'
 import LoanForm from './pages/LoanForm'
 import ExcelUpload from './pages/ExcelUpload'
+import PropertyTypeExposure from './pages/PropertyTypeExposure'
 
 const theme = createTheme({
   palette: {
@@ -160,6 +161,7 @@ function App() {
               <Route path="/portfolios" element={<PortfolioList />} />
               <Route path="/portfolios/:portfolioId/setup" element={<PortfolioSetup />} />
               <Route path="/portfolios/:id" element={<PortfolioDetail />} />
+              <Route path="/portfolios/:portfolioId/property-type-exposure" element={<PropertyTypeExposure />} />
               <Route path="/properties" element={<PropertyList />} />
               <Route path="/properties/new" element={<PropertyForm />} />
               <Route path="/properties/:id/edit" element={<PropertyForm />} />
