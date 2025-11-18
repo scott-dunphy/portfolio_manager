@@ -213,6 +213,7 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
     portfolio = _get_loan_portfolio(loan_obj)
     auto_refi_enabled = bool(getattr(portfolio, 'auto_refinance_enabled', False)) if portfolio else False
     refi_spreads = _load_refi_spreads(portfolio) if auto_refi_enabled else {}
+    property_obj = _resolve_property_for_loan(loan_obj)
 
     principal = _safe_float(loan_obj.principal_amount)
     rate = _safe_float(loan_obj.interest_rate) or 0.0
@@ -221,6 +222,8 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
 
     if principal is None or not start_date:
         return flows
+
+    origination_fee_rate = _safe_float(getattr(loan_obj, 'origination_fee', None)) or 0.0
 
     # Initial funding is a cash outflow from the portfolio's perspective.
     flows.append(
@@ -232,17 +235,35 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
         }
     )
 
+    origination_fee_amount = (principal or 0.0) * origination_fee_rate
+    if origination_fee_amount:
+        flows.append(
+            {
+                "date": start_date,
+                "type": "loan_origination_fee",
+                "amount": -abs(origination_fee_amount),
+                "description": "Loan origination fee",
+            }
+        )
+
     if not maturity_date or maturity_date <= start_date:
         return flows
+
+    sale_payoff_date = _determine_sale_payoff_date(property_obj, start_date, maturity_date)
+    payoff_date = sale_payoff_date or maturity_date
 
     frequency = (loan_obj.payment_frequency or "monthly").lower()
     months_per_period = {"monthly": 1, "quarterly": 3, "annually": 12}.get(frequency, 1)
 
-    total_months = max(
-        1,
-        (maturity_date.year - start_date.year) * 12 + (maturity_date.month - start_date.month),
-    )
-    periods = max(1, math.ceil(total_months / months_per_period))
+    if payoff_date > start_date:
+        total_months = max(
+            1,
+            (payoff_date.year - start_date.year) * 12 + (payoff_date.month - start_date.month),
+        )
+        periods = max(1, math.ceil(total_months / months_per_period))
+    else:
+        total_months = 0
+        periods = 0
     amortization_months = loan_obj.amortization_period_months or total_months
     io_months = loan_obj.io_period_months or 0
     rate_type = (getattr(loan_obj, 'rate_type', 'fixed') or 'fixed').lower()
@@ -250,6 +271,8 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
     sofr_spread = _safe_float(getattr(loan_obj, 'sofr_spread', 0.0)) or 0.0
     day_count_method = _normalize_day_count(getattr(loan_obj, 'interest_day_count', None))
     amortization_fraction = months_per_period / 12.0
+    exit_fee = _safe_float(getattr(loan_obj, 'exit_fee', None)) or 0.0
+    manual_overrides = _group_manual_loan_entries(loan_obj)
 
     if is_floating:
         full_interest_only = True
@@ -277,7 +300,10 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
     prev_payment_date = start_date
     for period_index in range(1, periods + 1):
         scheduled_date = start_date + relativedelta(months=months_per_period * period_index)
-        payment_date = _month_end(min(scheduled_date, maturity_date))
+        payment_date = _month_end(min(scheduled_date, payoff_date))
+        override_key = (payment_date.year, payment_date.month) if payment_date else None
+        manual_entry = manual_overrides.pop(override_key, None) if override_key else None
+        entry_payment_date = manual_entry['date'] if manual_entry else payment_date
         accrual_fraction = _day_count_fraction(prev_payment_date, payment_date, day_count_method, amortization_fraction)
 
         if is_floating:
@@ -296,6 +322,16 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
             if principal_component < 0:
                 principal_component = 0.0
 
+        manual_interest = None
+        manual_principal = None
+        if manual_entry:
+            manual_interest = manual_entry.get('interest')
+            manual_principal = manual_entry.get('principal')
+            if manual_interest is not None:
+                interest = manual_interest
+            if manual_principal is not None:
+                principal_component = manual_principal
+
         if principal_component > balance:
             principal_component = balance
 
@@ -304,18 +340,18 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
         if interest:
             flows.append(
                 {
-                    "date": payment_date,
+                    "date": entry_payment_date,
                     "type": "loan_interest",
-                    "amount": -interest,
+                    "amount": -abs(interest),
                     "description": "Interest payment",
                 }
             )
         if principal_component:
             flows.append(
                 {
-                    "date": payment_date,
+                    "date": entry_payment_date,
                     "type": "loan_principal",
-                    "amount": -principal_component,
+                    "amount": -abs(principal_component),
                     "description": "Principal repayment",
                 }
             )
@@ -327,19 +363,19 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
     # Ensure the final balance is cleared (for balloons / interest-only structures).
     refi_balance = 0.0
     if balance > 1e-4:
-        refi_balance = balance
         flows.append(
             {
-                "date": maturity_date,
+                "date": payoff_date,
                 "type": "loan_principal",
                 "amount": -balance,
                 "description": "Balloon repayment",
             }
         )
+        if sale_payoff_date is None:
+            refi_balance = balance
         balance = 0.0
 
     if auto_refi_enabled and refi_balance > 1e-4:
-        property_obj = _resolve_property_for_loan(loan_obj)
         refi_flows = _build_auto_refi_flows(
             refi_balance,
             maturity_date,
@@ -347,8 +383,100 @@ def _build_loan_cash_flows(loan_obj: Loan) -> List[dict]:
             refi_spreads,
         )
         flows.extend(refi_flows)
+    elif exit_fee:
+        flows.append(
+            {
+                "date": payoff_date,
+                "type": "loan_exit_fee",
+                "amount": -abs(exit_fee),
+                "description": "Loan exit fee",
+            }
+        )
 
     return flows
+
+
+def _group_manual_loan_entries(loan_obj: Loan) -> Dict[tuple, dict]:
+    manual_entries: Dict[tuple, dict] = {}
+    entries = getattr(loan_obj, "manual_cash_flows", None) or []
+    for entry in entries:
+        payment_date = getattr(entry, "payment_date", None)
+        if not payment_date:
+            continue
+        key = (payment_date.year, payment_date.month)
+        manual_entries[key] = {
+            "interest": _safe_float(getattr(entry, "interest_amount", None)),
+            "principal": _safe_float(getattr(entry, "principal_amount", None)),
+            "date": payment_date,
+        }
+    return manual_entries
+
+
+def _determine_sale_payoff_date(
+    property_obj: Optional[Property],
+    start_date: Optional[date],
+    maturity_date: Optional[date],
+) -> Optional[date]:
+    if not property_obj or not getattr(property_obj, 'exit_date', None):
+        return None
+    if not start_date or not maturity_date:
+        return None
+    candidate = _month_end(property_obj.exit_date)
+    if not candidate:
+        return None
+    if candidate >= maturity_date:
+        return None
+    if candidate <= start_date:
+        return start_date
+    return candidate
+
+
+def _interpolated_exit_cap_rate(
+    property_obj: Property,
+    target_date: date,
+    portfolio: Optional[Portfolio],
+) -> Optional[float]:
+    exit_cap_target = _safe_float(property_obj.exit_cap_rate)
+    if exit_cap_target is None or exit_cap_target <= 0:
+        return None
+
+    analysis_start = None
+    if portfolio and portfolio.analysis_start_date:
+        analysis_start = _month_end(portfolio.analysis_start_date)
+    if not analysis_start:
+        analysis_start = _month_end(_resolve_property_start_date(property_obj)) or target_date
+
+    sale_anchor = (
+        _month_end(property_obj.exit_date)
+        if property_obj.exit_date
+        else (_month_end(portfolio.analysis_end_date) if portfolio and portfolio.analysis_end_date else target_date)
+    )
+    if not sale_anchor or sale_anchor <= analysis_start:
+        sale_anchor = target_date
+
+    start_cap = _get_year1_cap_rate(property_obj)
+    if start_cap is None:
+        start_cap = exit_cap_target
+
+    total_months = max(1, _months_between(analysis_start, sale_anchor))
+    elapsed = max(0, min(_months_between(analysis_start, target_date), total_months))
+    t = min(1.0, elapsed / total_months)
+    return start_cap + (exit_cap_target - start_cap) * t
+
+
+def _get_year1_cap_rate(property_obj: Property) -> Optional[float]:
+    existing = _safe_float(getattr(property_obj, 'year_1_cap_rate', None))
+    if existing is not None and existing > 0:
+        return existing
+    forward_noi = _safe_float(getattr(property_obj, 'initial_noi', None))
+    market_value = _safe_float(getattr(property_obj, 'market_value_start', None))
+    if forward_noi and market_value and market_value > 0:
+        return forward_noi / market_value
+    return None
+
+
+def _months_between(start: date, end: date) -> int:
+    return (end.year - start.year) * 12 + (end.month - start.month)
 
 
 def _estimate_sale_amount(
@@ -357,21 +485,90 @@ def _estimate_sale_amount(
     initial_noi: Optional[float],
     noi_growth: float,
 ) -> Optional[float]:
+    override_price = _safe_float(getattr(property_obj, 'disposition_price_override', None))
+    if override_price is not None:
+        return override_price
     if initial_noi is None:
         return _safe_float(property_obj.purchase_price)
 
-    exit_cap = _safe_float(property_obj.exit_cap_rate)
+    start_date = _month_end(_resolve_property_start_date(property_obj))
+    portfolio = _get_property_portfolio(property_obj)
+    if portfolio and portfolio.analysis_start_date:
+        start_date = _month_end(portfolio.analysis_start_date)
+    if not start_date:
+        return _safe_float(property_obj.purchase_price)
+
+    projected_noi = _forward_noi_for_sale(property_obj, sale_date, initial_noi, noi_growth, start_date)
+    if projected_noi is None:
+        return _safe_float(property_obj.purchase_price)
+
+    exit_cap = _interpolated_exit_cap_rate(property_obj, sale_date, portfolio)
     if exit_cap is None or exit_cap <= 0:
         return _safe_float(property_obj.purchase_price)
 
-    start_date = _month_end(_resolve_property_start_date(property_obj))
-    if not start_date:
-        baseline_price = _safe_float(property_obj.purchase_price)
-        return baseline_price
-
-    years_elapsed = max(0, (sale_date.year - start_date.year) + (sale_date.month - start_date.month) / 12.0)
-    projected_noi = initial_noi * ((1 + noi_growth) ** years_elapsed)
     return projected_noi / exit_cap if exit_cap else None
+
+
+def _forward_noi_for_sale(
+    property_obj: Property,
+    sale_date: date,
+    initial_noi: Optional[float],
+    noi_growth: float,
+    start_anchor: date,
+) -> Optional[float]:
+    manual_entries = list(getattr(property_obj, "manual_cash_flows", []) or [])
+    use_manual = bool(getattr(property_obj, "use_manual_noi_capex", False) and manual_entries)
+    manual_by_month = {}
+    manual_by_year = {}
+    if use_manual:
+        for entry in manual_entries:
+            if entry.month:
+                manual_by_month[(entry.year, entry.month)] = entry
+            else:
+                manual_by_year[entry.year] = entry
+
+    total_noi = 0.0
+    months_to_project = 12
+    base_month = _month_end(sale_date)
+    purchase_month = _month_end(getattr(property_obj, 'purchase_date', None))
+    if not base_month:
+        return None
+
+    growth_base = _month_end(_resolve_property_start_date(property_obj)) or start_anchor
+
+    current_month = _month_end(base_month + relativedelta(months=1))
+    for _ in range(months_to_project):
+        if current_month is None:
+            break
+        manual_value = None
+        if use_manual:
+            manual_month_entry = manual_by_month.get((current_month.year, current_month.month))
+            if manual_month_entry:
+                manual_value = manual_month_entry.annual_noi or 0.0
+            else:
+                manual_entry = manual_by_year.get(current_month.year)
+                if manual_entry and manual_entry.annual_noi is not None:
+                    manual_value = (manual_entry.annual_noi or 0.0) / 12.0
+        if manual_value is not None:
+            monthly_noi = manual_value
+        elif purchase_month and current_month < purchase_month:
+            monthly_noi = 0.0
+        else:
+            if initial_noi is None:
+                monthly_noi = 0.0
+            else:
+                months_since_start = max(
+                    0,
+                    (current_month.year - growth_base.year) * 12
+                    + (current_month.month - growth_base.month)
+                )
+                full_years_elapsed = (months_since_start - 1) // 12 if months_since_start > 0 else 0
+                annual_noi = initial_noi * ((1 + noi_growth) ** full_years_elapsed)
+                monthly_noi = annual_noi / 12.0
+        total_noi += monthly_noi
+        current_month = _month_end(current_month + relativedelta(months=1))
+
+    return total_noi
 
 
 def _month_end(value: Optional[date]) -> Optional[date]:
@@ -477,7 +674,17 @@ def _load_refi_spreads(portfolio: Optional[Portfolio]) -> Dict[str, float]:
     try:
         data = json.loads(portfolio.auto_refinance_spreads)
         if isinstance(data, dict):
-            return {str(k).strip().lower(): float(v) for k, v in data.items() if v is not None}
+            spreads: Dict[str, float] = {}
+            for key, value in data.items():
+                if value is None:
+                    continue
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    continue
+                # Spreads are stored in basis points on the portfolio form.
+                spreads[str(key).strip().lower()] = numeric / 10000.0
+            return spreads
     except (json.JSONDecodeError, ValueError, TypeError):
         return {}
     return {}
@@ -507,6 +714,8 @@ def _build_auto_refi_flows(
     total_rate = forward_rate + spread
     if total_rate < 0:
         total_rate = 0.0
+    forward_pct = forward_rate * 100.0
+    spread_pct = spread * 100.0
 
     flows = []
     term_months = 120  # 10-year, monthly periods
@@ -528,7 +737,7 @@ def _build_auto_refi_flows(
                 "date": payment_date,
                 "type": "loan_interest",
                 "amount": interest,
-                "description": "Auto-refinance interest",
+                "description": f"Auto-refinance interest (10y {forward_pct:.2f}%, spread {spread_pct:.2f}%)",
             }
         )
 

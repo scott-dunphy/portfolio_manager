@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime
+from calendar import monthrange
 from io import BytesIO
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -167,6 +168,10 @@ def build_cash_flow_report(portfolio_id: int) -> BytesIO:
     sheet4 = workbook.create_sheet('Property Detail Ownership')
     _build_property_sheet(sheet4, property_rows_ownership)
 
+    # Add Property Summary sheet
+    sheet5 = workbook.create_sheet('Property Summary')
+    _build_property_summary_sheet(sheet5, properties, valuation_lookup)
+
     stream = BytesIO()
     workbook.save(stream)
     stream.seek(0)
@@ -324,10 +329,13 @@ def _augment_aggregate_with_valuations(
         property_obj = property_map.get(property_id)
         if not property_obj:
             continue
+        exit_cutoff = _month_end(property_obj.exit_date) if property_obj.exit_date else None
         for record in entries:
             entry_date = record.get('date')
             if not entry_date:
                 continue
+            if exit_cutoff and entry_date > exit_cutoff:
+                break
             date_entry = _ensure_date_entry(aggregate_by_date, entry_date)
             current = record.get('market_value')
             prior = record.get('market_value_prior')
@@ -398,6 +406,7 @@ def _prepare_property_valuations(properties: List[Property]):
         entries = []
         entry_lookup = {}
         prev_value = property_obj.market_value_start or 0.0
+        exit_cutoff = _month_end(property_obj.exit_date) if property_obj.exit_date else None
         for item in monthly_values:
             date_str = item.get('date')
             if not date_str:
@@ -406,6 +415,8 @@ def _prepare_property_valuations(properties: List[Property]):
                 entry_date = datetime.fromisoformat(date_str).date()
             except ValueError:
                 continue
+            if exit_cutoff and entry_date > exit_cutoff:
+                break
             current = item.get('market_value')
             record = {
                 'date': entry_date,
@@ -421,6 +432,13 @@ def _prepare_property_valuations(properties: List[Property]):
         lookup[property_obj.id] = entry_lookup
         series[property_obj.id] = entries
     return lookup, series
+
+
+def _month_end(value: Optional[date]) -> Optional[date]:
+    if value is None:
+        return None
+    last_day = monthrange(value.year, value.month)[1]
+    return value.replace(day=last_day)
 
 
 def _compute_property_outstanding(
@@ -489,3 +507,67 @@ def _resolve_labels(property_map, loan_map, cf):
         property_label = f"Unassigned ({loan_label})"
 
     return property_label, loan_label
+
+
+def _build_property_summary_sheet(ws, properties: List[Property], valuation_lookup: Dict):
+    """Build a summary sheet with underlying property data."""
+    ws.title = 'Property Summary'
+
+    headers = [
+        'Property ID',
+        'Property Name',
+        'Property Type',
+        'Address',
+        'City',
+        'State',
+        'Zip Code',
+        'Purchase Date',
+        'Purchase Price',
+        'Market Value Start',
+        'Initial NOI',
+        'NOI Growth Rate',
+        'Exit Date',
+        'Exit Cap Rate',
+        'Ownership %',
+        'Building Size',
+        'Valuation Method'
+    ]
+    ws.append(headers)
+    ws.row_dimensions[1].font = Font(bold=True)
+
+    for prop in properties:
+        row = [
+            prop.property_id or '',
+            prop.property_name or '',
+            prop.property_type or '',
+            prop.address or '',
+            prop.city or '',
+            prop.state or '',
+            prop.zip_code or '',
+            prop.purchase_date.strftime('%Y-%m-%d') if prop.purchase_date else '',
+            prop.purchase_price or '',
+            prop.market_value_start or '',
+            prop.initial_noi or '',
+            prop.noi_growth_rate or '',
+            prop.exit_date.strftime('%Y-%m-%d') if prop.exit_date else '',
+            prop.exit_cap_rate or '',
+            (prop.ownership_percent or 1.0) * 100,  # Convert to percentage
+            prop.building_size or '',
+            prop.valuation_method or ''
+        ]
+        ws.append(row)
+
+    # Format columns
+    ws.column_dimensions['H'].number_format = 'YYYY-MM-DD'
+    ws.column_dimensions['I'].number_format = '$#,##0'
+    ws.column_dimensions['J'].number_format = '$#,##0'
+    ws.column_dimensions['K'].number_format = '$#,##0'
+    ws.column_dimensions['L'].number_format = '0.0%'
+    ws.column_dimensions['N'].number_format = 'YYYY-MM-DD'
+    ws.column_dimensions['O'].number_format = '0.0%'
+    ws.column_dimensions['P'].number_format = '#,##0'
+
+    # Auto-width columns
+    for column_cells in ws.columns:
+        length = max(len(str(cell.value)) if cell.value is not None else 0 for cell in column_cells)
+        ws.column_dimensions[column_cells[0].column_letter].width = min(max(length + 2, 12), 40)

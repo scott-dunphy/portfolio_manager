@@ -12,7 +12,9 @@
     "@emotion/react": "^11.11.1",
     "@emotion/styled": "^11.11.0",
     "react-dropzone": "^14.2.3",
-    "date-fns": "^2.30.0"
+    "date-fns": "^2.30.0",
+    "react-plotly.js": "^2.6.0",
+    "plotly.js": "^2.26.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",

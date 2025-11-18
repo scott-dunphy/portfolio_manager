@@ -22,7 +22,7 @@ def create_app():
         ensure_schema()
 
     # Import routes
-    from routes import portfolio_routes, property_routes, loan_routes, preferred_equity_routes, cash_flow_routes, upload_routes, property_ownership_routes, covenant_routes
+    from routes import portfolio_routes, property_routes, loan_routes, preferred_equity_routes, cash_flow_routes, upload_routes, property_ownership_routes, covenant_routes, property_type_exposure_routes
 
     # Register blueprints
     app.register_blueprint(portfolio_routes.bp)
@@ -33,6 +33,7 @@ def create_app():
     app.register_blueprint(upload_routes.bp)
     app.register_blueprint(property_ownership_routes.bp)
     app.register_blueprint(covenant_routes.bp)
+    app.register_blueprint(property_type_exposure_routes.bp)
 
     return app
 

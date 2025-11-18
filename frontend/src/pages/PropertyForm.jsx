@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  Box, Button, Typography, Paper, TextField, Grid, MenuItem
+  Box, Button, Typography, Paper, TextField, Grid, MenuItem, Divider, FormControlLabel, Checkbox
 } from '@mui/material'
 import { ArrowBack as ArrowBackIcon } from '@mui/icons-material'
 import { propertyAPI, portfolioAPI } from '../services/api'
@@ -35,9 +35,42 @@ function PropertyForm() {
     initial_noi: '',
     valuation_method: 'growth',
     ownership_percent: 1,
-    capex_percent_of_noi: ''
+    capex_percent_of_noi: '',
+    disposition_price_override: '',
+    encumbrance_override: false,
+    encumbrance_note: '',
+    has_active_loan: false,
+    is_encumbered: false,
+    encumbrance_periods: []
   })
+  const [encumbranceNoteError, setEncumbranceNoteError] = useState('')
   const [focusedCurrencyField, setFocusedCurrencyField] = useState(null)
+  const [associatedLoans, setAssociatedLoans] = useState([])
+  const manualEncumbranceDisabled = formData.has_active_loan
+  const computedEncumbrance = formData.has_active_loan || formData.encumbrance_override
+
+  const handleEncumbranceOverrideChange = (checked) => {
+    if (manualEncumbranceDisabled) {
+      return
+    }
+    setFormData(prev => ({
+      ...prev,
+      encumbrance_override: checked
+    }))
+    if (!checked) {
+      setEncumbranceNoteError('')
+    }
+  }
+
+  const handleEncumbranceNoteChange = (value) => {
+    setFormData(prev => ({
+      ...prev,
+      encumbrance_note: value
+    }))
+    if (value.trim()) {
+      setEncumbranceNoteError('')
+    }
+  }
 
   useEffect(() => {
     fetchPortfolios()
@@ -55,7 +88,12 @@ function PropertyForm() {
     }
   }
 
-  const currencyFields = new Set(['purchase_price', 'initial_noi', 'market_value_start'])
+  const currencyFields = new Set([
+    'purchase_price',
+    'initial_noi',
+    'market_value_start',
+    'disposition_price_override'
+  ])
 
   const getCurrencyValue = (name) => {
     const raw = formData[name] ?? ''
@@ -65,11 +103,38 @@ function PropertyForm() {
     return formatCurrencyInputValue(raw)
   }
 
+  const formatLoanCurrency = (value) => {
+    if (value === null || value === undefined || value === '') {
+      return '—'
+    }
+    const asNumber = Number(value)
+    if (Number.isNaN(asNumber)) {
+      return String(value)
+    }
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      maximumFractionDigits: 0
+    }).format(asNumber)
+  }
+
+  const formatLoanDate = (value) => {
+    if (!value) {
+      return '—'
+    }
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) {
+      return value
+    }
+    return date.toLocaleDateString()
+  }
+
 
   const fetchProperty = async () => {
     try {
       const response = await propertyAPI.getById(id)
       const data = response.data
+      setAssociatedLoans(Array.isArray(data.loans) ? data.loans : [])
       setFormData(prev => ({
         ...prev,
         ...data,
@@ -79,8 +144,18 @@ function PropertyForm() {
         initial_noi: data.initial_noi != null ? String(Math.round(data.initial_noi)) : '',
         capex_percent_of_noi:
           data.capex_percent_of_noi != null ? String(data.capex_percent_of_noi) : '',
-        calculated_year1_cap_rate: data.calculated_year1_cap_rate ?? data.year_1_cap_rate ?? ''
+        calculated_year1_cap_rate: data.calculated_year1_cap_rate ?? data.year_1_cap_rate ?? '',
+        disposition_price_override:
+          data.disposition_price_override != null
+            ? String(Math.round(data.disposition_price_override))
+            : '',
+        encumbrance_override: Boolean(data.encumbrance_override),
+        encumbrance_note: data.encumbrance_note || '',
+        has_active_loan: Boolean(data.has_active_loan),
+        is_encumbered: Boolean(data.is_encumbered),
+        encumbrance_periods: Array.isArray(data.encumbrance_periods) ? data.encumbrance_periods : []
       }))
+      setEncumbranceNoteError('')
     } catch (error) {
       console.error('Error fetching property:', error)
     }
@@ -97,15 +172,29 @@ function PropertyForm() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (formData.encumbrance_override && !formData.encumbrance_note.trim()) {
+      setEncumbranceNoteError('Please explain why the property is encumbered.')
+      return
+    }
+    setEncumbranceNoteError('')
     try {
-      const { calculated_year1_cap_rate, ...rest } = formData
+      const {
+        calculated_year1_cap_rate,
+        has_active_loan,
+        is_encumbered,
+        ...rest
+      } = formData
       const payload = {
         ...rest,
         purchase_price: formData.purchase_price ? Number(formData.purchase_price) : null,
         market_value_start: formData.market_value_start ? Number(formData.market_value_start) : null,
         initial_noi: formData.initial_noi ? Number(formData.initial_noi) : null,
         capex_percent_of_noi:
-          formData.capex_percent_of_noi === '' ? null : Number(formData.capex_percent_of_noi)
+          formData.capex_percent_of_noi === '' ? null : Number(formData.capex_percent_of_noi),
+        disposition_price_override:
+          formData.disposition_price_override === '' ? null : Number(formData.disposition_price_override),
+        encumbrance_override: Boolean(formData.encumbrance_override),
+        encumbrance_note: formData.encumbrance_override ? formData.encumbrance_note.trim() : null
       }
       if (id) {
         await propertyAPI.update(id, payload)
@@ -349,6 +438,73 @@ function PropertyForm() {
                 required
               />
             </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Disposition Price Override"
+                name="disposition_price_override"
+                type="text"
+                inputMode="numeric"
+                value={getCurrencyValue('disposition_price_override')}
+                onFocus={() => setFocusedCurrencyField('disposition_price_override')}
+                onBlur={() => setFocusedCurrencyField(null)}
+                onChange={handleChange}
+                helperText="Leave blank to use NOI/exit cap calculation"
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 2
+                }}
+              >
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                  Encumbrance
+                </Typography>
+                <FormControlLabel
+                  control={<Checkbox checked={computedEncumbrance} disabled />}
+                  label={
+                    formData.has_active_loan
+                      ? 'Encumbered (active loan)'
+                      : formData.encumbrance_override
+                      ? 'Encumbered (manual override)'
+                      : 'Unencumbered'
+                  }
+                />
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={formData.encumbrance_override}
+                      onChange={(e) => handleEncumbranceOverrideChange(e.target.checked)}
+                      disabled={manualEncumbranceDisabled}
+                    />
+                  }
+                  label="Manually mark as encumbered"
+                />
+                {formData.has_active_loan && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: formData.encumbrance_override ? 1 : 0 }}>
+                    Active debt automatically marks this property as encumbered.
+                  </Typography>
+                )}
+                {formData.encumbrance_override && (
+                  <TextField
+                    fullWidth
+                    label="Encumbrance Note"
+                    value={formData.encumbrance_note}
+                    onChange={(e) => handleEncumbranceNoteChange(e.target.value)}
+                    required
+                    error={Boolean(encumbranceNoteError)}
+                    helperText={
+                      encumbranceNoteError || 'Explain why the property is encumbered without debt'
+                    }
+                    sx={{ mt: 1 }}
+                  />
+                )}
+              </Box>
+            </Grid>
             <Grid item xs={12}>
               <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
                 <Button onClick={() => navigate(-1)}>Cancel</Button>
@@ -360,6 +516,72 @@ function PropertyForm() {
           </Grid>
         </form>
       </Paper>
+      {id && (
+        <Paper sx={{ p: 3, mt: 3 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+            <Typography variant="h6">Linked Loans</Typography>
+            <Button size="small" onClick={() => navigate('/loans/new')} variant="text">
+              Add Loan
+            </Button>
+          </Box>
+          {associatedLoans.length === 0 ? (
+            <Typography color="text.secondary">No loans are currently linked to this property.</Typography>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {associatedLoans.map((loan, index) => (
+                <Box
+                  key={loan.id || `${loan.loan_id}-${index}`}
+                  sx={{
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: 2,
+                    p: 2
+                  }}
+                >
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Box>
+                      <Typography variant="subtitle1">
+                        {loan.loan_name || loan.loan_id || `Loan #${loan.id}`}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        ID: {loan.loan_id || loan.id} • Type: {loan.loan_type || 'N/A'}
+                      </Typography>
+                    </Box>
+                    {loan.id && (
+                      <Button size="small" variant="outlined" onClick={() => navigate(`/loans/${loan.id}/edit`)}>
+                        Open Loan
+                      </Button>
+                    )}
+                  </Box>
+                  <Divider sx={{ my: 1.5 }} />
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" color="text.secondary">
+                        Principal Amount
+                      </Typography>
+                      <Typography sx={{ fontWeight: 600 }}>{formatLoanCurrency(loan.principal_amount)}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" color="text.secondary">
+                        Interest Rate
+                      </Typography>
+                      <Typography sx={{ fontWeight: 600 }}>
+                        {loan.interest_rate != null ? `${(Number(loan.interest_rate) * 100).toFixed(2)}%` : '—'}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" color="text.secondary">
+                        Maturity Date
+                      </Typography>
+                      <Typography sx={{ fontWeight: 600 }}>{formatLoanDate(loan.maturity_date)}</Typography>
+                    </Grid>
+                  </Grid>
+                </Box>
+              ))}
+            </Box>
+          )}
+        </Paper>
+      )}
     </Box>
   )
 }

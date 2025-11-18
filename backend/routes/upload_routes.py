@@ -5,7 +5,7 @@ import pandas as pd
 from flask import Blueprint, jsonify, request, send_file
 
 from database import db
-from models import Loan, Property, PropertyManualCashFlow
+from models import Loan, Property, PropertyManualCashFlow, LoanManualCashFlow
 from services.cash_flow_service import regenerate_loan_cash_flows, regenerate_property_cash_flows
 from services.import_template import build_import_template
 from services.property_valuation_service import calculate_property_valuation
@@ -46,7 +46,9 @@ def upload_excel():
     loans_df = excel.parse("Loans") if "Loans" in excel.sheet_names else pd.DataFrame()
     manual_df = excel.parse("Manual_NOI_Capex") if "Manual_NOI_Capex" in excel.sheet_names else pd.DataFrame()
 
-    result = _process_import(portfolio_id, properties_df, loans_df, manual_df)
+    loan_cf_df = excel.parse("Loan_Cash_Flows") if "Loan_Cash_Flows" in excel.sheet_names else pd.DataFrame()
+
+    result = _process_import(portfolio_id, properties_df, loans_df, manual_df, loan_cf_df)
     status = 201 if not result["errors"] else 207
     return jsonify(result), status
 
@@ -102,7 +104,7 @@ def _parse_bool(value):
     return str(value).strip().lower() in {'1', 'true', 't', 'yes', 'y'}
 
 
-def _process_import(portfolio_id, properties_df, loans_df, manual_df):
+def _process_import(portfolio_id, properties_df, loans_df, manual_df, loan_cf_df):
     errors = []
     properties_created = 0
     properties_updated = 0
@@ -110,6 +112,7 @@ def _process_import(portfolio_id, properties_df, loans_df, manual_df):
     loans_updated = 0
 
     property_map = {}
+    loan_map = {}
     touched_properties = set()
     touched_loans = set()
 
@@ -122,6 +125,16 @@ def _process_import(portfolio_id, properties_df, loans_df, manual_df):
         if prop:
             property_map[prop_id] = prop
         return prop
+
+    def get_loan(loan_identifier):
+        if not loan_identifier:
+            return None
+        if loan_identifier in loan_map:
+            return loan_map[loan_identifier]
+        loan = Loan.query.filter_by(loan_id=loan_identifier).first()
+        if loan:
+            loan_map[loan_identifier] = loan
+        return loan
 
     # Properties sheet
     for idx, row in properties_df.iterrows():
@@ -243,7 +256,14 @@ def _process_import(portfolio_id, properties_df, loans_df, manual_df):
             errors.append(f"Loans row {idx + 2}: Property_ID '{prop_id}' not found.")
             continue
 
-        loan_obj = Loan.query.filter_by(portfolio_id=portfolio_id, loan_id=loan_id).first()
+        existing_loan = Loan.query.filter_by(loan_id=loan_id).first()
+        if existing_loan and existing_loan.portfolio_id != portfolio_id:
+            errors.append(
+                f"Loans row {idx + 2}: Loan_ID '{loan_id}' already exists in another portfolio."
+            )
+            continue
+
+        loan_obj = existing_loan
         is_new_loan = loan_obj is None
         if is_new_loan:
             loan_obj = Loan(
@@ -268,6 +288,7 @@ def _process_import(portfolio_id, properties_df, loans_df, manual_df):
             loans_created += 1
         else:
             loans_updated += 1
+            loan_obj.portfolio_id = portfolio_id
             loan_obj.property_id = property_obj.id
             loan_obj.loan_name = row.get('Loan_Name') or loan_obj.loan_name
             principal = _parse_float(row.get('Principal_Amount'))
@@ -279,6 +300,8 @@ def _process_import(portfolio_id, properties_df, loans_df, manual_df):
                 spread = _parse_float(row.get('SOFR_Spread'))
                 if spread is not None:
                     loan_obj.sofr_spread = spread
+                if loan_obj.interest_rate is None:
+                    loan_obj.interest_rate = 0.0
             interest_rate = _parse_float(row.get('Interest_Rate'))
             if interest_rate is not None and rate_type != 'floating':
                 loan_obj.interest_rate = interest_rate
@@ -307,7 +330,51 @@ def _process_import(portfolio_id, properties_df, loans_df, manual_df):
             if exit_fee is not None:
                 loan_obj.exit_fee = exit_fee
 
+        loan_map[loan_id] = loan_obj
         touched_loans.add(loan_obj)
+
+    # Loan manual cash flows
+    if not loan_cf_df.empty:
+        manual_entries = {}
+        for idx, row in loan_cf_df.iterrows():
+            loan_identifier = str(row.get('Loan_ID')).strip() if pd.notna(row.get('Loan_ID')) else None
+            payment_date_raw = row.get('Payment_Date') or row.get('Date')
+            payment_date = _parse_date(payment_date_raw)
+            interest_amount = _parse_float(row.get('Interest_Amount'))
+            principal_amount = _parse_float(row.get('Principal_Amount'))
+            if not loan_identifier:
+                errors.append(f"Loan_Cash_Flows row {idx + 2}: Loan_ID is required.")
+                continue
+            if not payment_date:
+                errors.append(f"Loan_Cash_Flows row {idx + 2}: Payment_Date is required.")
+                continue
+            if interest_amount is None and principal_amount is None:
+                errors.append(f"Loan_Cash_Flows row {idx + 2}: Provide Interest_Amount or Principal_Amount.")
+                continue
+            manual_entries.setdefault(loan_identifier, []).append(
+                {
+                    "payment_date": payment_date,
+                    "interest_amount": interest_amount,
+                    "principal_amount": principal_amount,
+                }
+            )
+
+        for loan_identifier, entries in manual_entries.items():
+            loan_obj = get_loan(loan_identifier)
+            if not loan_obj or loan_obj.portfolio_id != portfolio_id:
+                errors.append(f"Loan_Cash_Flows: Loan_ID '{loan_identifier}' not found in portfolio.")
+                continue
+            LoanManualCashFlow.query.filter_by(loan_id=loan_obj.id).delete()
+            for entry in sorted(entries, key=lambda item: item["payment_date"]):
+                db.session.add(
+                    LoanManualCashFlow(
+                        loan_id=loan_obj.id,
+                        payment_date=entry["payment_date"],
+                        interest_amount=entry["interest_amount"],
+                        principal_amount=entry["principal_amount"],
+                    )
+                )
+            touched_loans.add(loan_obj)
 
     try:
         for prop in touched_properties:

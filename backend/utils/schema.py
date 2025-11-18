@@ -39,6 +39,24 @@ def ensure_schema():
     )
     _ensure_column(
         inspector=inspector,
+        table='properties',
+        column='disposition_price_override',
+        ddl='FLOAT'
+    )
+    _ensure_column(
+        inspector=inspector,
+        table='properties',
+        column='encumbrance_override',
+        ddl='BOOLEAN DEFAULT 0'
+    )
+    _ensure_column(
+        inspector=inspector,
+        table='properties',
+        column='encumbrance_note',
+        ddl='TEXT'
+    )
+    _ensure_column(
+        inspector=inspector,
         table='property_manual_cash_flows',
         column='month',
         ddl='INTEGER'
@@ -119,6 +137,9 @@ def _rebuild_properties_table():
         "ownership_percent",
         "capex_percent_of_noi",
         "use_manual_noi_capex",
+        "encumbrance_override",
+        "encumbrance_note",
+        "disposition_price_override",
         "created_at",
         "updated_at",
         "additional_data",
@@ -152,6 +173,9 @@ def _rebuild_properties_table():
                 ownership_percent FLOAT DEFAULT 1.0,
                 capex_percent_of_noi FLOAT DEFAULT 0.0,
                 use_manual_noi_capex BOOLEAN DEFAULT 0,
+                encumbrance_override BOOLEAN DEFAULT 0,
+                encumbrance_note TEXT,
+                disposition_price_override FLOAT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 additional_data TEXT,

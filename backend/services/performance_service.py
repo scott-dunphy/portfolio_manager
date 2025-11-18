@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta
+from calendar import monthrange
 from typing import Dict, List, Optional, Tuple
 
 from dateutil.relativedelta import relativedelta
@@ -131,6 +132,7 @@ def _prepare_property_states(properties: List[Property], apply_ownership: bool):
         valuation = calculate_property_valuation(prop)
         monthly_values = {}
         prev_value = (prop.market_value_start or 0.0) * (prop.ownership_percent if apply_ownership else 1.0)
+        exit_cutoff = _month_end(prop.exit_date) if prop.exit_date else None
         for entry in valuation.get('monthly_market_values', []):
             date_str = entry.get('date')
             if not date_str:
@@ -139,6 +141,8 @@ def _prepare_property_states(properties: List[Property], apply_ownership: bool):
                 entry_date = datetime.fromisoformat(date_str).date()
             except ValueError:
                 continue
+            if exit_cutoff and entry_date > exit_cutoff:
+                break
             value = entry.get('market_value')
             scaled_value = value * (prop.ownership_percent or 1.0) if apply_ownership and value is not None else value
             monthly_values[entry_date] = {**entry, 'market_value': scaled_value}
@@ -160,7 +164,8 @@ def _accumulate_property_events(cash_flows: List[CashFlow]):
             label = _format_quarter_label(cf.date)
             capex[cf.property_id][label] += cf.amount or 0.0
         elif cf.cash_flow_type == 'property_sale':
-            sales[cf.property_id][cf.date] = cf.amount or 0.0
+            sale_quarter_end = _quarter_end(_quarter_start(cf.date))
+            sales[cf.property_id][sale_quarter_end] = cf.amount or 0.0
     return capex, sales
 
 
@@ -298,6 +303,13 @@ def _sum_amounts(
                 amount *= percent
             total += abs(amount) if absolute else amount
     return total
+
+
+def _month_end(value: Optional[date]) -> Optional[date]:
+    if value is None:
+        return None
+    last_day = monthrange(value.year, value.month)[1]
+    return value.replace(day=last_day)
 
 
 def _prepare_ownership_lookup(properties: List[Property]) -> Dict[int, List[Tuple[date, float]]]:

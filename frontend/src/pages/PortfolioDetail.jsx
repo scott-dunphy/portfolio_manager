@@ -23,7 +23,8 @@ import {
   TableHead,
   TableRow,
   Tabs,
-  Typography
+  Typography,
+  Checkbox
 } from '@mui/material'
 import { ArrowBack as ArrowBackIcon } from '@mui/icons-material'
 import DownloadIcon from '@mui/icons-material/Download'
@@ -47,11 +48,61 @@ import {
   sanitizeCurrencyInput
 } from '../utils/numberFormat'
 
+const PROPERTY_CURRENCY_FIELDS = new Set([
+  'purchase_price',
+  'market_value_start',
+  'initial_noi',
+  'disposition_price_override'
+])
+
+const buildPropertyFormState = (property = {}) => ({
+  portfolio_id: property.portfolio_id ?? '',
+  property_id: property.property_id ?? '',
+  property_name: property.property_name ?? '',
+  property_type: property.property_type ?? '',
+  address: property.address ?? '',
+  city: property.city ?? '',
+  state: property.state ?? '',
+  zip_code: property.zip_code ?? '',
+  purchase_price: property.purchase_price != null ? String(Math.round(property.purchase_price)) : '',
+  market_value_start:
+    property.market_value_start != null ? String(Math.round(property.market_value_start)) : '',
+  disposition_price_override:
+    property.disposition_price_override != null ? String(Math.round(property.disposition_price_override)) : '',
+  purchase_date: property.purchase_date || '',
+  exit_date: property.exit_date || '',
+  exit_cap_rate: property.exit_cap_rate ?? '',
+  year_1_cap_rate: property.year_1_cap_rate ?? '',
+  calculated_year1_cap_rate: property.calculated_year1_cap_rate ?? property.year_1_cap_rate ?? '',
+  building_size: property.building_size ?? '',
+  noi_growth_rate: property.noi_growth_rate ?? '',
+  initial_noi: property.initial_noi != null ? String(Math.round(property.initial_noi)) : '',
+  valuation_method: property.valuation_method || 'growth',
+  ownership_percent: property.ownership_percent ?? 1,
+  capex_percent_of_noi:
+    property.capex_percent_of_noi != null ? String(property.capex_percent_of_noi) : '',
+  encumbrance_override: Boolean(property.encumbrance_override),
+  encumbrance_note: property.encumbrance_note || '',
+  has_active_loan: Boolean(property.has_active_loan),
+  is_encumbered: Boolean(property.is_encumbered),
+  encumbrance_periods: Array.isArray(property.encumbrance_periods)
+    ? property.encumbrance_periods.map((period) => ({
+        start_date: period.start_date || null,
+        end_date: period.end_date || null,
+        manual: Boolean(period.manual),
+        loan_id: period.loan_id ?? null
+      }))
+    : []
+})
+
 function PortfolioDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [portfolio, setPortfolio] = useState(null)
   const [properties, setProperties] = useState([])
+  const [propertyForms, setPropertyForms] = useState({})
+  const [propertyFormStatus, setPropertyFormStatus] = useState({})
+  const [focusedPropertyCurrencyField, setFocusedPropertyCurrencyField] = useState(null)
   const [loans, setLoans] = useState([])
   const [preferredEquities, setPreferredEquities] = useState([])
   const [cashFlows, setCashFlows] = useState([])
@@ -117,6 +168,31 @@ function PortfolioDetail() {
     setPropertyFlowState({})
     setManualCashFlowForms({})
   }, [id])
+
+  useEffect(() => {
+    if (!properties || properties.length === 0) {
+      setPropertyForms({})
+      setPropertyFormStatus({})
+      return
+    }
+    const mappedForms = {}
+    properties.forEach((property) => {
+      mappedForms[property.id] = buildPropertyFormState(property)
+    })
+    setPropertyForms(mappedForms)
+    setPropertyFormStatus((prev) => {
+      const statusState = {}
+      properties.forEach((property) => {
+        statusState[property.id] =
+          prev[property.id] || {
+            saving: false,
+            error: '',
+            success: ''
+          }
+      })
+      return statusState
+    })
+  }, [properties])
 
   useEffect(() => {
     if (tab === 3 && !cashFlowsLoaded && !cashFlowsLoading) {
@@ -206,6 +282,200 @@ function PortfolioDetail() {
       setSuccess('')
     }
   }
+
+  const getPropertyFormValues = (propertyId) => {
+    if (propertyForms[propertyId]) {
+      return propertyForms[propertyId]
+    }
+    const property = properties.find((prop) => prop.id === propertyId)
+    return buildPropertyFormState(property || {})
+  }
+
+  const getPropertyFieldValue = (propertyId, field) => {
+    const values = getPropertyFormValues(propertyId)
+    return values[field] ?? ''
+  }
+
+  const getPropertyCurrencyValue = (propertyId, field) => {
+    const rawValue = getPropertyFieldValue(propertyId, field)
+    const focusKey = `${propertyId}:${field}`
+    if (focusedPropertyCurrencyField === focusKey) {
+      return rawValue
+    }
+    return formatCurrencyInputValue(rawValue)
+  }
+
+  const handlePropertyFieldChange = (propertyId, field, value) => {
+    const nextValue = PROPERTY_CURRENCY_FIELDS.has(field) ? sanitizeCurrencyInput(value) : value
+    setPropertyForms((prev) => {
+      const current =
+        prev[propertyId] ||
+        buildPropertyFormState(properties.find((prop) => prop.id === propertyId) || {})
+      return {
+        ...prev,
+        [propertyId]: {
+          ...current,
+          [field]: nextValue
+        }
+      }
+    })
+    setPropertyFormStatus((prev) => {
+      const status = prev[propertyId] || { saving: false, error: '', success: '' }
+      return {
+        ...prev,
+        [propertyId]: {
+          ...status,
+          error: '',
+          success: ''
+        }
+      }
+    })
+  }
+
+  const handlePropertyFormReset = (propertyId) => {
+    const property = properties.find((prop) => prop.id === propertyId)
+    if (!property) {
+      return
+    }
+    setPropertyForms((prev) => ({
+      ...prev,
+      [propertyId]: buildPropertyFormState(property)
+    }))
+    setPropertyFormStatus((prev) => {
+      const status = prev[propertyId] || { saving: false, error: '', success: '' }
+      return {
+        ...prev,
+        [propertyId]: {
+          ...status,
+          error: '',
+          success: ''
+        }
+      }
+    })
+  }
+
+  const handlePropertyEncumbranceOverrideChange = (propertyId, checked) => {
+    const hasActiveLoan = Boolean(getPropertyFieldValue(propertyId, 'has_active_loan'))
+    if (hasActiveLoan) {
+      return
+    }
+    handlePropertyFieldChange(propertyId, 'encumbrance_override', checked)
+    if (!checked) {
+      handlePropertyFieldChange(propertyId, 'encumbrance_note', '')
+    }
+  }
+
+  const handleSaveProperty = async (propertyId) => {
+    const values = getPropertyFormValues(propertyId)
+    if (values.encumbrance_override && !(values.encumbrance_note || '').trim()) {
+      setPropertyFormStatus((prev) => ({
+        ...prev,
+        [propertyId]: {
+          ...(prev[propertyId] || { saving: false, error: '', success: '' }),
+          saving: false,
+          error: 'Encumbrance note is required when manual encumbrance is selected.',
+          success: ''
+        }
+      }))
+      return
+    }
+    setPropertyFormStatus((prev) => ({
+      ...prev,
+      [propertyId]: {
+        ...(prev[propertyId] || { saving: false, error: '', success: '' }),
+        saving: true,
+        error: '',
+        success: ''
+      }
+    }))
+    try {
+      const {
+        calculated_year1_cap_rate: _calculatedYear1CapRate,
+        has_active_loan: _hasActiveLoan,
+        is_encumbered: _isEncumbered,
+        ...rest
+      } = values
+      const payload = {
+        ...rest,
+        purchase_price: values.purchase_price ? Number(values.purchase_price) : null,
+        market_value_start: values.market_value_start ? Number(values.market_value_start) : null,
+        initial_noi: values.initial_noi ? Number(values.initial_noi) : null,
+        capex_percent_of_noi:
+          values.capex_percent_of_noi === '' ? null : Number(values.capex_percent_of_noi),
+        disposition_price_override:
+          values.disposition_price_override === ''
+            ? null
+            : Number(values.disposition_price_override),
+        encumbrance_override: Boolean(values.encumbrance_override),
+        encumbrance_note: values.encumbrance_override
+          ? (values.encumbrance_note || '').trim()
+          : null
+      }
+      await propertyAPI.update(propertyId, payload)
+      await fetchPortfolioData()
+      setPropertyFormStatus((prev) => ({
+        ...prev,
+        [propertyId]: {
+          ...(prev[propertyId] || { saving: false, error: '', success: '' }),
+          saving: false,
+          error: '',
+          success: 'Property updated.'
+        }
+      }))
+      setSuccess('Property updated.')
+      setError('')
+    } catch (err) {
+      console.error('Failed to update property:', err)
+      setPropertyFormStatus((prev) => ({
+        ...prev,
+        [propertyId]: {
+          ...(prev[propertyId] || { saving: false, error: '', success: '' }),
+          saving: false,
+          error: err.response?.data?.error || err.message || 'Failed to update property.',
+          success: ''
+        }
+      }))
+    }
+  }
+
+  const parseISODate = React.useCallback((value) => {
+    if (!value) {
+      return null
+    }
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? null : date
+  }, [])
+
+  const isPropertyEncumberedOnDate = React.useCallback(
+    (propertyId, isoDate) => {
+      const values = getPropertyFormValues(propertyId)
+      if (!values || !isoDate) {
+        return false
+      }
+      if (values.encumbrance_override) {
+        return true
+      }
+      const targetDate = parseISODate(isoDate)
+      if (!targetDate) {
+        return false
+      }
+      const periods = Array.isArray(values.encumbrance_periods)
+        ? values.encumbrance_periods
+        : []
+      return periods.some((period) => {
+        if (period.manual) {
+          return true
+        }
+        const start = parseISODate(period.start_date)
+        const end = parseISODate(period.end_date)
+        if (!start || !end) {
+          return false
+        }
+        return start <= targetDate && targetDate <= end
+      })
+    },
+    [getPropertyFormValues, parseISODate]
+  )
 
   const handleDeleteLoan = async (loanId) => {
     if (!window.confirm('Delete this loan?')) {
@@ -916,19 +1186,39 @@ function PortfolioDetail() {
       const propertiesArray = Array.from(entry.properties.values()).map((propertyEntry) => {
         const propertyId = propertyEntry.propertyId
         const valuations = propertyId ? getPropertyValuationSnapshot(propertyId, entry.date) : { current: null, prior: null }
-        const currentValue = valuations.current?.market_value ?? null
-        const priorValue = valuations.prior?.market_value ?? null
+        const ownershipShareRaw =
+          applyOwnership && propertyId
+            ? getOwnershipPercentForDate(propertyId, entry.date)
+            : 1
+        const ownershipShare =
+          typeof ownershipShareRaw === 'number' && Number.isFinite(ownershipShareRaw)
+            ? ownershipShareRaw
+            : 1
+        const currentValueRaw = valuations.current?.market_value ?? null
+        const priorValueRaw = valuations.prior?.market_value ?? null
+        const currentValue =
+          currentValueRaw != null ? currentValueRaw * ownershipShare : currentValueRaw
+        const priorValue =
+          priorValueRaw != null ? priorValueRaw * ownershipShare : priorValueRaw
         const capexRaw = propertyEntry.typeTotals['property_capex'] || 0
         const capexOutlay = -capexRaw
+        const acquisitionRaw = propertyEntry.typeTotals['property_acquisition'] || 0
+        const acquisitionOutlay = -acquisitionRaw
+        const acquisitionOverride =
+          acquisitionOutlay > 0 ? acquisitionOutlay : null
         const appreciation =
           currentValue != null && priorValue != null
-            ? currentValue - priorValue - (capexOutlay || 0)
+            ? (acquisitionOverride ?? currentValue) - priorValue - (capexOutlay || 0) - (acquisitionOutlay || 0)
             : null
+        const encumberedOnDate =
+          propertyId != null ? isPropertyEncumberedOnDate(propertyId, entry.date) : false
         return {
           ...propertyEntry,
-          marketValueCurrent: currentValue,
+          ownershipShare,
+          marketValueCurrent: acquisitionOverride ?? currentValue,
           marketValuePrior: priorValue,
           appreciation,
+          encumberedOnDate,
           flows: propertyEntry.flows
             .slice()
             .sort((a, b) => (a.cash_flow_type || '').localeCompare(b.cash_flow_type || ''))
@@ -983,7 +1273,8 @@ function PortfolioDetail() {
     ownershipEvents,
     getOwnershipPercentForDate,
     portfolio,
-    getPropertyValuationSnapshot
+    getPropertyValuationSnapshot,
+    isPropertyEncumberedOnDate
   ])
 
   const getLatestOwnershipPercent = (propertyId) => {
@@ -1166,6 +1457,30 @@ function PortfolioDetail() {
     if (normalized === 'actual/365') return 'Actual/365'
     return '30/360'
   }
+  const loanFlowTypePriority = {
+    loan_principal: 0,
+    loan_interest: 1,
+    loan_funding: 2
+  }
+  const sortLoanFlows = (flows = []) => {
+    return [...flows].sort((a, b) => {
+      const rawTimeA = a.date ? new Date(a.date).getTime() : 0
+      const rawTimeB = b.date ? new Date(b.date).getTime() : 0
+      const timeA = Number.isFinite(rawTimeA) ? rawTimeA : 0
+      const timeB = Number.isFinite(rawTimeB) ? rawTimeB : 0
+      if (timeA !== timeB) {
+        return timeA - timeB
+      }
+      const weightA = loanFlowTypePriority[a.cash_flow_type] ?? 99
+      const weightB = loanFlowTypePriority[b.cash_flow_type] ?? 99
+      if (weightA !== weightB) {
+        return weightA - weightB
+      }
+      const idA = a.id ?? 0
+      const idB = b.id ?? 0
+      return idA - idB
+    })
+  }
   const formatLoanRateLabel = (loan) => {
     if (!loan) return '—'
     const dayCountLabel = formatDayCount(loan.interest_day_count)
@@ -1222,13 +1537,22 @@ function PortfolioDetail() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/')}>
-          Back
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+          <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/')}>
+            Back
+          </Button>
+          <Typography variant="h4" sx={{ ml: 2 }}>
+            {portfolio.name}
+          </Typography>
+        </Box>
+        <Button
+          variant="outlined"
+          onClick={() => navigate(`/portfolios/${id}/property-type-exposure`)}
+          sx={{ whiteSpace: 'nowrap' }}
+        >
+          Property Type Exposure
         </Button>
-        <Typography variant="h4" sx={{ ml: 2 }}>
-          {portfolio.name}
-        </Typography>
       </Box>
 
       {error && (
@@ -1291,6 +1615,11 @@ function PortfolioDetail() {
                   const propertyFlowsError = propertyFlowEntry.error
                   const manualState = getManualState(property.id)
                   const manualRows = manualState.rows
+                  const hasActiveLoan = Boolean(getPropertyFieldValue(property.id, 'has_active_loan'))
+                  const manualEncumbrance = Boolean(
+                    getPropertyFieldValue(property.id, 'encumbrance_override')
+                  )
+                  const computedEncumbrance = hasActiveLoan || manualEncumbrance
                   return (
                     <Accordion
                       key={property.id}
@@ -1315,11 +1644,13 @@ function PortfolioDetail() {
                             <Typography variant="body2" color="text.secondary">
                               {property.property_type || 'Type N/A'} · {property.city || 'City N/A'}, {property.state || 'State N/A'}
                             </Typography>
+                            {property.is_encumbered && (
+                              <Typography variant="caption" color="error">
+                                Encumbered
+                              </Typography>
+                            )}
                           </Box>
                           <Box sx={{ display: 'flex', gap: 1 }}>
-                            <Button size="small" onClick={() => navigate(`/properties/${property.id}/edit`)}>
-                              Edit
-                            </Button>
                             <Button
                               size="small"
                               color="error"
@@ -1331,64 +1662,374 @@ function PortfolioDetail() {
                         </Box>
                       </AccordionSummary>
                       <AccordionDetails>
-                        <Grid container spacing={2} sx={{ mb: 2 }}>
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Typography variant="subtitle2" color="text.secondary">
-                              Purchase Price
-                            </Typography>
-                            <Typography>{formatCurrency(property.purchase_price)}</Typography>
+                        <Box sx={{ mb: 3 }}>
+                          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                            Property Details
+                          </Typography>
+                          <Grid container spacing={2}>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Property Name"
+                                required
+                                value={getPropertyFieldValue(property.id, 'property_name')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'property_name', e.target.value)
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Property ID"
+                                required
+                                value={getPropertyFieldValue(property.id, 'property_id')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'property_id', e.target.value)
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Property Type"
+                                value={getPropertyFieldValue(property.id, 'property_type')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'property_type', e.target.value)
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Ownership %"
+                                type="text"
+                                inputMode="numeric"
+                                helperText="Decimal (1 = 100%)"
+                                value={getPropertyFieldValue(property.id, 'ownership_percent')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'ownership_percent', e.target.value)
+                                }
+                                inputProps={{ step: 0.01, min: 0, max: 1 }}
+                              />
+                            </Grid>
+                            <Grid item xs={12}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Address"
+                                value={getPropertyFieldValue(property.id, 'address')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'address', e.target.value)
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="City"
+                                value={getPropertyFieldValue(property.id, 'city')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'city', e.target.value)
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="State"
+                                value={getPropertyFieldValue(property.id, 'state')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'state', e.target.value)
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Zip Code"
+                                value={getPropertyFieldValue(property.id, 'zip_code')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'zip_code', e.target.value)
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Purchase Price"
+                                type="text"
+                                inputMode="numeric"
+                                value={getPropertyCurrencyValue(property.id, 'purchase_price')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'purchase_price', e.target.value)
+                                }
+                                onFocus={() => setFocusedPropertyCurrencyField(`${property.id}:purchase_price`)}
+                                onBlur={() =>
+                                  setFocusedPropertyCurrencyField((prev) =>
+                                    prev === `${property.id}:purchase_price` ? null : prev
+                                  )
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Market Value (Analysis Start)"
+                                type="text"
+                                inputMode="numeric"
+                                required
+                                value={getPropertyCurrencyValue(property.id, 'market_value_start')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'market_value_start', e.target.value)
+                                }
+                                onFocus={() =>
+                                  setFocusedPropertyCurrencyField(`${property.id}:market_value_start`)
+                                }
+                                onBlur={() =>
+                                  setFocusedPropertyCurrencyField((prev) =>
+                                    prev === `${property.id}:market_value_start` ? null : prev
+                                  )
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Initial NOI"
+                                type="text"
+                                inputMode="numeric"
+                                value={getPropertyCurrencyValue(property.id, 'initial_noi')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'initial_noi', e.target.value)
+                                }
+                                onFocus={() => setFocusedPropertyCurrencyField(`${property.id}:initial_noi`)}
+                                onBlur={() =>
+                                  setFocusedPropertyCurrencyField((prev) =>
+                                    prev === `${property.id}:initial_noi` ? null : prev
+                                  )
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Building Size (sq ft)"
+                                type="number"
+                                value={getPropertyFieldValue(property.id, 'building_size')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'building_size', e.target.value)
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Purchase Date"
+                                type="date"
+                                value={getPropertyFieldValue(property.id, 'purchase_date')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'purchase_date', e.target.value)
+                                }
+                                InputLabelProps={{ shrink: true }}
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Exit Date"
+                                type="date"
+                                value={getPropertyFieldValue(property.id, 'exit_date')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'exit_date', e.target.value)
+                                }
+                                InputLabelProps={{ shrink: true }}
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="NOI Growth Rate"
+                                type="number"
+                                inputProps={{ step: 0.01 }}
+                                value={getPropertyFieldValue(property.id, 'noi_growth_rate')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'noi_growth_rate', e.target.value)
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Exit Cap Rate"
+                                type="number"
+                                inputProps={{ step: 0.01 }}
+                                value={getPropertyFieldValue(property.id, 'exit_cap_rate')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'exit_cap_rate', e.target.value)
+                                }
+                                required
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Disposition Price Override"
+                                type="text"
+                                inputMode="numeric"
+                                value={getPropertyCurrencyValue(property.id, 'disposition_price_override')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(
+                                    property.id,
+                                    'disposition_price_override',
+                                    e.target.value
+                                  )
+                                }
+                                onFocus={() =>
+                                  setFocusedPropertyCurrencyField(`${property.id}:disposition_price_override`)
+                                }
+                                onBlur={() =>
+                                  setFocusedPropertyCurrencyField((prev) =>
+                                    prev === `${property.id}:disposition_price_override` ? null : prev
+                                  )
+                                }
+                                helperText="Leave blank to use NOI/exit cap calculation"
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Capex % of NOI"
+                                type="number"
+                                inputProps={{ step: 0.01, min: 0 }}
+                                helperText="Decimal percent (0.1 = 10%)"
+                                value={getPropertyFieldValue(property.id, 'capex_percent_of_noi')}
+                                onChange={(e) =>
+                                  handlePropertyFieldChange(property.id, 'capex_percent_of_noi', e.target.value)
+                                }
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6} md={3}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Year 1 Cap Rate (Calculated)"
+                                value={
+                                  getPropertyFieldValue(property.id, 'calculated_year1_cap_rate') ||
+                                  getPropertyFieldValue(property.id, 'year_1_cap_rate')
+                                }
+                                InputProps={{ readOnly: true }}
+                                helperText="Calculated after saving"
+                              />
+                            </Grid>
+                            <Grid item xs={12} md={6}>
+                              <Box
+                                sx={{
+                                  border: '1px solid',
+                                  borderColor: 'divider',
+                                  borderRadius: 1,
+                                  p: 2
+                                }}
+                              >
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                                  Encumbrance
+                                </Typography>
+                                <FormControlLabel
+                                  control={<Checkbox checked={computedEncumbrance} disabled />}
+                                  label={
+                                    hasActiveLoan
+                                      ? 'Encumbered (active loan)'
+                                      : manualEncumbrance
+                                      ? 'Encumbered (manual override)'
+                                      : 'Unencumbered'
+                                  }
+                                />
+                                <FormControlLabel
+                                  control={
+                                    <Checkbox
+                                      checked={manualEncumbrance}
+                                      onChange={(e) =>
+                                        handlePropertyEncumbranceOverrideChange(
+                                          property.id,
+                                          e.target.checked
+                                        )
+                                      }
+                                      disabled={hasActiveLoan}
+                                    />
+                                  }
+                                  label="Manually mark as encumbered"
+                                />
+                                {hasActiveLoan && (
+                                  <Typography variant="body2" color="text.secondary" sx={{ mb: manualEncumbrance ? 1 : 0 }}>
+                                    Active debt automatically marks this property as encumbered.
+                                  </Typography>
+                                )}
+                                {manualEncumbrance && (
+                                  <TextField
+                                    fullWidth
+                                    size="small"
+                                    label="Encumbrance Note"
+                                    value={getPropertyFieldValue(property.id, 'encumbrance_note')}
+                                    onChange={(e) =>
+                                      handlePropertyFieldChange(
+                                        property.id,
+                                        'encumbrance_note',
+                                        e.target.value
+                                      )
+                                    }
+                                    helperText="Explain non-debt encumbrance"
+                                  />
+                                )}
+                              </Box>
+                            </Grid>
                           </Grid>
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Typography variant="subtitle2" color="text.secondary">
-                              Initial NOI
-                            </Typography>
-                            <Typography>{formatCurrency(property.initial_noi)}</Typography>
-                          </Grid>
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Typography variant="subtitle2" color="text.secondary">
-                              Market Value (Analysis Start)
-                            </Typography>
-                            <Typography>{formatCurrency(property.market_value_start)}</Typography>
-                          </Grid>
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Typography variant="subtitle2" color="text.secondary">
-                              Year 1 Cap Rate
-                            </Typography>
-                            <Typography>
-                              {formatPercent(
-                                property.calculated_year1_cap_rate ?? property.year_1_cap_rate
-                              )}
-                            </Typography>
-                          </Grid>
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Typography variant="subtitle2" color="text.secondary">
-                              Capex % of NOI
-                            </Typography>
-                            <Typography>{formatPercent(property.capex_percent_of_noi)}</Typography>
-                          </Grid>
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Typography variant="subtitle2" color="text.secondary">
-                              Current Ownership
-                            </Typography>
-                            <Typography>{formatPercent(property.ownership_percent ?? getLatestOwnershipPercent(property.id))}</Typography>
-                          </Grid>
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Typography variant="subtitle2" color="text.secondary">
-                              NOI Growth
-                            </Typography>
-                            <Typography>
-                              {property.noi_growth_rate != null ? `${(property.noi_growth_rate * 100).toFixed(2)}%` : '—'}
-                            </Typography>
-                          </Grid>
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Typography variant="subtitle2" color="text.secondary">
-                              Exit Cap Rate
-                            </Typography>
-                            <Typography>
-                              {property.exit_cap_rate != null ? `${(property.exit_cap_rate * 100).toFixed(2)}%` : '—'}
-                            </Typography>
-                          </Grid>
-                        </Grid>
+                          <Box sx={{ mt: 2 }}>
+                            {propertyFormStatus[property.id]?.error && (
+                              <Typography variant="body2" color="error" sx={{ mb: 1 }}>
+                                {propertyFormStatus[property.id].error}
+                              </Typography>
+                            )}
+                            {propertyFormStatus[property.id]?.success && (
+                              <Typography variant="body2" color="success.main" sx={{ mb: 1 }}>
+                                {propertyFormStatus[property.id].success}
+                              </Typography>
+                            )}
+                            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+                              <Button
+                                size="small"
+                                onClick={() => handlePropertyFormReset(property.id)}
+                                disabled={propertyFormStatus[property.id]?.saving}
+                              >
+                                Reset
+                              </Button>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                onClick={() => handleSaveProperty(property.id)}
+                                disabled={propertyFormStatus[property.id]?.saving}
+                              >
+                                {propertyFormStatus[property.id]?.saving ? 'Saving…' : 'Save Property'}
+                              </Button>
+                            </Box>
+                          </Box>
+                        </Box>
 
                         <Divider sx={{ my: 2 }} />
 
@@ -1839,6 +2480,7 @@ function PortfolioDetail() {
                     error: ''
                   }
                   const flowsForLoan = loanFlowEntry.data || []
+                  const sortedLoanFlows = sortLoanFlows(flowsForLoan)
                   return (
                     <Accordion
                       key={loan.id}
@@ -1860,6 +2502,7 @@ function PortfolioDetail() {
                           <Box>
                             <Typography variant="subtitle1">
                               {loan.loan_name || loan.loan_id || `Loan #${loan.id}`}
+                              {propertyForLoan ? ` · ${propertyForLoan.property_name || propertyForLoan.property_id || ''}` : ''}
                             </Typography>
                             <Typography variant="body2" color="text.secondary">
                               Principal {formatCurrency(loan.principal_amount)} · Rate {formatLoanRateLabel(loan)}
@@ -1941,7 +2584,7 @@ function PortfolioDetail() {
                                 </TableRow>
                               </TableHead>
                               <TableBody>
-                                {flowsForLoan.map((cf) => (
+                                {sortedLoanFlows.map((cf) => (
                                   <TableRow key={`${loan.id}-${cf.id || cf.date}-${cf.cash_flow_type}`}>
                                     <TableCell>{cf.date}</TableCell>
                                     <TableCell>{cf.cash_flow_type || 'Uncategorized'}</TableCell>
@@ -2219,7 +2862,23 @@ function PortfolioDetail() {
                                                     )}
                                                   </IconButton>
                                                 </TableCell>
-                                                <TableCell>{label}</TableCell>
+                                                <TableCell>
+                                                  <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                                                    <Typography variant="body2">{label}</Typography>
+                                                    <Typography
+                                                      variant="caption"
+                                                      color={
+                                                        propertyEntry.encumberedOnDate
+                                                          ? 'error.main'
+                                                          : 'text.secondary'
+                                                      }
+                                                    >
+                                                      {propertyEntry.encumberedOnDate
+                                                        ? 'Encumbered'
+                                                        : 'Unencumbered'}
+                                                    </Typography>
+                                                  </Box>
+                                                </TableCell>
                                                 <TableCell align="right">
                                                   {formatCurrency(propertyEntry.total)}
                                                 </TableCell>

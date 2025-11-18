@@ -18,9 +18,12 @@ def _fetch_forward_curve() -> List[tuple]:
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json",
     }
-    response = requests.get(CHATHAM_URL, headers=headers, timeout=10)
-    response.raise_for_status()
-    payload = response.json()
+    try:
+        response = requests.get(CHATHAM_URL, headers=headers, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException:
+        return []
     rates = []
     for entry in payload.get("Rates", []):
         date_str = entry.get("Date")

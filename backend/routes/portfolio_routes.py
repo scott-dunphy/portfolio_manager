@@ -1,8 +1,9 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from database import db
-from models import Portfolio
+from models import Portfolio, Loan
 from datetime import datetime
 import json
+from services.cash_flow_service import regenerate_loan_cash_flows
 
 bp = Blueprint('portfolios', __name__, url_prefix='/api/portfolios')
 
@@ -57,6 +58,8 @@ def update_portfolio(portfolio_id):
     """Update an existing portfolio"""
     portfolio = Portfolio.query.get_or_404(portfolio_id)
     data = request.get_json()
+    prev_auto_enabled = bool(portfolio.auto_refinance_enabled)
+    prev_auto_spreads = portfolio.auto_refinance_spreads or ''
 
     try:
         if 'name' in data:
@@ -83,6 +86,17 @@ def update_portfolio(portfolio_id):
         portfolio.updated_at = datetime.utcnow()
         db.session.commit()
 
+        auto_settings_changed = (
+            prev_auto_enabled != bool(portfolio.auto_refinance_enabled)
+            or (prev_auto_spreads or '') != (portfolio.auto_refinance_spreads or '')
+        )
+
+        if auto_settings_changed:
+            try:
+                _regenerate_portfolio_loans(portfolio.id)
+            except Exception:
+                current_app.logger.exception('Failed to regenerate loan cash flows for portfolio %s', portfolio.id)
+
         return jsonify(portfolio.to_dict())
     except Exception as e:
         db.session.rollback()
@@ -100,3 +114,12 @@ def delete_portfolio(portfolio_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 400
+
+
+def _regenerate_portfolio_loans(portfolio_id: int) -> None:
+    loans = Loan.query.filter_by(portfolio_id=portfolio_id).all()
+    if not loans:
+        return
+    for loan in loans:
+        regenerate_loan_cash_flows(loan, commit=False)
+    db.session.commit()

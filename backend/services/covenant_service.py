@@ -300,6 +300,9 @@ def _summarize_loan_debt_service(
             flow_type = (cf.cash_flow_type or '').lower()
             if flow_type not in {'loan_interest', 'loan_principal'}:
                 continue
+            description = (cf.description or '').lower()
+            if flow_type == 'loan_principal' and 'balloon repayment' in description:
+                continue
             debt_service[loan_id][_month_end(cf.date)] += abs(cf.amount or 0.0)
     return debt_service
 

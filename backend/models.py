@@ -81,6 +81,9 @@ class Property(db.Model):
     year_1_cap_rate = db.Column(db.Float)
     building_size = db.Column(db.Float)
     market_value_start = db.Column(db.Float)
+    disposition_price_override = db.Column(db.Float)
+    encumbrance_override = db.Column(db.Boolean, default=False)
+    encumbrance_note = db.Column(db.Text)
 
     # NOI and valuation
     noi_growth_rate = db.Column(db.Float)
@@ -109,6 +112,11 @@ class Property(db.Model):
         cascade='all, delete-orphan',
         order_by='PropertyManualCashFlow.year'
     )
+    loans = db.relationship(
+        'Loan',
+        backref='property',
+        lazy=True
+    )
 
     def to_dict(self):
         return {
@@ -128,12 +136,15 @@ class Property(db.Model):
             'year_1_cap_rate': self.year_1_cap_rate,
             'building_size': self.building_size,
             'market_value_start': self.market_value_start,
+            'disposition_price_override': self.disposition_price_override,
             'noi_growth_rate': self.noi_growth_rate,
             'initial_noi': self.initial_noi,
             'valuation_method': self.valuation_method,
             'ownership_percent': self.ownership_percent,
             'capex_percent_of_noi': self.capex_percent_of_noi,
             'use_manual_noi_capex': self.use_manual_noi_capex,
+            'encumbrance_override': bool(self.encumbrance_override),
+            'encumbrance_note': self.encumbrance_note,
             'manual_cash_flows': [entry.to_dict() for entry in self.manual_cash_flows],
             'ownership_events': [event.to_dict() for event in self.ownership_events],
             'created_at': self.created_at.isoformat() if self.created_at else None,
@@ -168,6 +179,13 @@ class Loan(db.Model):
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    manual_cash_flows = db.relationship(
+        'LoanManualCashFlow',
+        backref='loan',
+        lazy=True,
+        cascade='all, delete-orphan',
+        order_by='LoanManualCashFlow.payment_date'
+    )
 
     def to_dict(self):
         return {
@@ -190,7 +208,8 @@ class Loan(db.Model):
             'origination_fee': self.origination_fee,
             'exit_fee': self.exit_fee,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'manual_cash_flows': [entry.to_dict() for entry in self.manual_cash_flows],
         }
 
 
@@ -301,4 +320,27 @@ class PropertyManualCashFlow(db.Model):
             'annual_capex': self.annual_capex,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+
+
+class LoanManualCashFlow(db.Model):
+    __tablename__ = 'loan_manual_cash_flows'
+
+    id = db.Column(db.Integer, primary_key=True)
+    loan_id = db.Column(db.Integer, db.ForeignKey('loans.id'), nullable=False)
+    payment_date = db.Column(db.Date, nullable=False)
+    interest_amount = db.Column(db.Float)
+    principal_amount = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'loan_id': self.loan_id,
+            'payment_date': self.payment_date.isoformat() if self.payment_date else None,
+            'interest_amount': self.interest_amount,
+            'principal_amount': self.principal_amount,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
