@@ -160,7 +160,7 @@ def _accumulate_property_events(cash_flows: List[CashFlow]):
     for cf in cash_flows:
         if not cf.property_id or not cf.date:
             continue
-        if cf.cash_flow_type == 'property_capex':
+        if cf.cash_flow_type in {'property_capex', 'property_acquisition'}:
             label = _format_quarter_label(cf.date)
             capex[cf.property_id][label] += cf.amount or 0.0
         elif cf.cash_flow_type == 'property_sale':

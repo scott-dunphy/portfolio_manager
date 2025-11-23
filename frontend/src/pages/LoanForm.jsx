@@ -113,6 +113,10 @@ function LoanForm() {
     try {
       const payload = {
         ...formData,
+        property_id:
+          formData.property_id === '' || formData.property_id === null
+            ? null
+            : Number(formData.property_id),
         principal_amount: Number(formData.principal_amount || 0),
         origination_fee: formData.origination_fee === '' ? 0 : Number(formData.origination_fee),
         exit_fee: formData.exit_fee === '' ? 0 : Number(formData.exit_fee),
