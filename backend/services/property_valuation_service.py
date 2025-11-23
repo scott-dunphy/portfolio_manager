@@ -30,10 +30,13 @@ def calculate_property_valuation(property_obj: Property) -> Dict[str, object]:
     forward_noi = _calculate_forward_noi(months, monthly_noi, purchase_month)
 
     market_value_start = property_obj.market_value_start or 0.0
+    purchase_price = getattr(property_obj, "purchase_price", None) or 0.0
     first_month = months[0]
     forward_first_year = forward_noi.get(first_month)
     year1_cap = None
-    if market_value_start and forward_first_year:
+    if purchase_price and forward_first_year:
+        year1_cap = forward_first_year / purchase_price
+    elif market_value_start and forward_first_year:
         year1_cap = forward_first_year / market_value_start if market_value_start else None
 
     exit_cap = property_obj.exit_cap_rate

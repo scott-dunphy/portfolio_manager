@@ -269,10 +269,22 @@ def upsert_manual_cash_flows(property_id):
             year = entry.get('year')
             if year is None:
                 continue
+            month_raw = entry.get('month')
+            month_value = None
+            if isinstance(month_raw, str) and month_raw.strip() == '':
+                month_raw = None
+            if month_raw is not None:
+                try:
+                    month_value = int(month_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("month must be an integer between 1 and 12") from exc
+                if month_value < 1 or month_value > 12:
+                    raise ValueError("month must be between 1 and 12")
             manual_rows.append(
                 PropertyManualCashFlow(
                     property_id=property_id,
                     year=int(year),
+                    month=month_value,
                     annual_noi=_parse_float(entry.get('annual_noi'), 'annual_noi'),
                     annual_capex=_parse_float(entry.get('annual_capex'), 'annual_capex')
                 )
@@ -456,10 +468,3 @@ def _get_encumbrance_periods(property_obj: Property):
     if property_obj.encumbrance_override:
         periods.append({'start_date': None, 'end_date': None, 'manual': True})
     return periods
-    return False
-
-
-def _is_property_encumbered(property_obj: Property) -> bool:
-    if property_obj.encumbrance_override:
-        return True
-    return _has_active_loan(property_obj)

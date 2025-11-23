@@ -67,6 +67,22 @@ def ensure_schema():
         column='interest_day_count',
         ddl="VARCHAR(20) DEFAULT '30/360'"
     )
+    _ensure_table(
+        inspector=inspector,
+        table='loan_manual_cash_flows',
+        ddl="""
+            CREATE TABLE loan_manual_cash_flows (
+                id INTEGER PRIMARY KEY,
+                loan_id INTEGER NOT NULL,
+                payment_date DATE NOT NULL,
+                interest_amount FLOAT,
+                principal_amount FLOAT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(loan_id) REFERENCES loans(id) ON DELETE CASCADE
+            )
+        """
+    )
     _ensure_properties_portfolio_unique()
 
 
@@ -81,6 +97,13 @@ def _ensure_column(inspector, table, column, ddl):
 
     statement = text(f'ALTER TABLE {table} ADD COLUMN {column} {ddl}')
     db.session.execute(statement)
+    db.session.commit()
+
+
+def _ensure_table(inspector, table, ddl):
+    if inspector.has_table(table):
+        return
+    db.session.execute(text(ddl))
     db.session.commit()
 
 

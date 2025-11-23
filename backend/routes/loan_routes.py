@@ -53,9 +53,15 @@ def create_loan():
         else:
             interest_rate = interest_rate or 0.0
 
+        property_id = data.get('property_id')
+        if isinstance(property_id, str) and property_id.strip() == '':
+            property_id = None
+        elif property_id is not None and not isinstance(property_id, int):
+            property_id = int(property_id)
+
         loan = Loan(
             portfolio_id=data['portfolio_id'],
-            property_id=data.get('property_id'),
+            property_id=property_id,
             loan_id=data['loan_id'],
             loan_name=data['loan_name'],
             principal_amount=data['principal_amount'],
@@ -109,9 +115,16 @@ def update_loan(loan_id):
         # Update fields if provided
         for field in ['loan_name', 'principal_amount', 'interest_rate', 'payment_frequency',
                       'loan_type', 'amortization_period_months', 'io_period_months',
-                      'origination_fee', 'exit_fee', 'property_id', 'sofr_spread']:
+                      'origination_fee', 'exit_fee', 'sofr_spread']:
             if field in data:
                 setattr(loan, field, data[field])
+        if 'property_id' in data:
+            property_id = data.get('property_id')
+            if isinstance(property_id, str) and property_id.strip() == '':
+                property_id = None
+            elif property_id is not None and not isinstance(property_id, int):
+                property_id = int(property_id)
+            loan.property_id = property_id
 
         if 'origination_date' in data:
             loan.origination_date = datetime.fromisoformat(data['origination_date']).date()

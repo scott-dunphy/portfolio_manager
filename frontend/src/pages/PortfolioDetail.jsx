@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Accordion,
@@ -144,8 +144,7 @@ function PortfolioDetail() {
   const [ownershipEvents, setOwnershipEvents] = useState({})
   const [ownershipEventForms, setOwnershipEventForms] = useState({})
   const [applyOwnership, setApplyOwnership] = useState(false)
-  const [manualCashFlowForms, setManualCashFlowForms] = useState({})
-  const [manualCashFlowFocus, setManualCashFlowFocus] = useState({})
+  const [propertyAccordionExpanded, setPropertyAccordionExpanded] = useState({})
   const [propertyCashFlowExpanded, setPropertyCashFlowExpanded] = useState({})
   const [propertyFlowState, setPropertyFlowState] = useState({})
   const [loanFlowState, setLoanFlowState] = useState({})
@@ -163,11 +162,61 @@ function PortfolioDetail() {
     { value: 'redemption_payment', label: 'Redemption Payment (outflow)' }
   ]
 
+  const fetchPortfolioData = useCallback(async () => {
+    try {
+      const [portfolioRes, propertiesRes, loansRes, prefEquityRes] = await Promise.all([
+        portfolioAPI.getById(id),
+        propertyAPI.getAll(id),
+        loanAPI.getAll(id),
+        preferredEquityAPI.getAll(id)
+      ])
+      setPortfolio(portfolioRes.data)
+      const propertiesData = propertiesRes.data || []
+      setProperties(propertiesData)
+      setLoans(loansRes.data)
+      setPreferredEquities(prefEquityRes.data)
+      setCashFlows([])
+      setCashFlowsLoaded(false)
+      setPerformanceData(null)
+      setPerformanceLoaded(false)
+      setPerformanceError('')
+      setCovenantData(null)
+      setCovenantLoaded(false)
+      setCovenantError('')
+
+      const eventsState = {}
+      propertiesData.forEach((property) => {
+        eventsState[property.id] = {
+          data: property.ownership_events || [],
+          loading: false,
+          error: ''
+        }
+      })
+      setOwnershipEvents(eventsState)
+      setOwnershipEventForms((prev) => {
+        const updated = { ...prev }
+        propertiesData.forEach((property) => {
+          if (!updated[property.id]) {
+            updated[property.id] = {
+              event_date: property.purchase_date || new Date().toISOString().split('T')[0],
+              ownership_percent: property.ownership_percent ?? 1,
+              note: ''
+            }
+          }
+        })
+        return updated
+      })
+    } catch (error) {
+      console.error('Error fetching portfolio data:', error)
+      setError(error.response?.data?.error || error.message || 'Failed to load portfolio.')
+      setPortfolio(null)
+    }
+  }, [id])
+
   useEffect(() => {
     fetchPortfolioData()
     setPropertyFlowState({})
-    setManualCashFlowForms({})
-  }, [id])
+  }, [fetchPortfolioData, id])
 
   useEffect(() => {
     if (!properties || properties.length === 0) {
@@ -219,54 +268,6 @@ function PortfolioDetail() {
   useEffect(() => {
     setCovenantExpanded({})
   }, [covenantData])
-
-  const fetchPortfolioData = async () => {
-    try {
-      const [portfolioRes, propertiesRes, loansRes, prefEquityRes] = await Promise.all([
-        portfolioAPI.getById(id),
-        propertyAPI.getAll(id),
-        loanAPI.getAll(id),
-        preferredEquityAPI.getAll(id)
-      ])
-      setPortfolio(portfolioRes.data)
-      const propertiesData = propertiesRes.data || []
-      setProperties(propertiesData)
-      setLoans(loansRes.data)
-      setPreferredEquities(prefEquityRes.data)
-      setCashFlows([])
-      setCashFlowsLoaded(false)
-      setPerformanceData(null)
-      setPerformanceLoaded(false)
-      setPerformanceError('')
-
-      const eventsState = {}
-      propertiesData.forEach((property) => {
-        eventsState[property.id] = {
-          data: property.ownership_events || [],
-          loading: false,
-          error: ''
-        }
-      })
-      setOwnershipEvents(eventsState)
-      setOwnershipEventForms((prev) => {
-        const updated = { ...prev }
-        propertiesData.forEach((property) => {
-          if (!updated[property.id]) {
-            updated[property.id] = {
-              event_date: property.purchase_date || new Date().toISOString().split('T')[0],
-              ownership_percent: property.ownership_percent ?? 1,
-              note: ''
-            }
-          }
-        })
-        return updated
-      })
-    } catch (error) {
-      console.error('Error fetching portfolio data:', error)
-      setError(error.response?.data?.error || error.message || 'Failed to load portfolio.')
-      setPortfolio(null)
-    }
-  }
 
   const handleDeleteProperty = async (propertyId) => {
     if (!window.confirm('Delete this property? This will remove related loans.')) {
@@ -658,276 +659,18 @@ function PortfolioDetail() {
     }
   }
 
-  const manualFocusKey = (propertyId, index, field) => `${propertyId}-${index}-${field}`
-
-  const getManualState = (propertyId) =>
-    manualCashFlowForms[propertyId] || { rows: [], loading: false, error: '', loaded: false }
-  const getManualRows = (propertyId) => getManualState(propertyId).rows
-
-  const handleManualRowChange = (propertyId, index, field, value) => {
-    setManualCashFlowForms((prev) => {
-      const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
-      const rows = [...prevState.rows]
-      const existing = rows[index] || {
-        year: '',
-        frequency: 'annual',
-        month: '',
-        annual_noi: '',
-        annual_capex: ''
-      }
-      const updatedRow = { ...existing }
-
-      if (field === 'year') {
-        updatedRow.year = value.replace(/[^0-9]/g, '')
-      } else if (field === 'frequency') {
-        updatedRow.frequency = value
-        if (value === 'monthly' && !updatedRow.month) {
-          updatedRow.month = '1'
-        }
-        if (value !== 'monthly') {
-          updatedRow.month = ''
-        }
-      } else if (field === 'month') {
-        const digits = value.replace(/[^0-9]/g, '')
-        if (digits === '') {
-          updatedRow.month = ''
-        } else {
-          let monthValue = Number(digits)
-          if (Number.isNaN(monthValue)) {
-            updatedRow.month = ''
-          } else {
-            monthValue = Math.max(1, Math.min(12, monthValue))
-            updatedRow.month = String(monthValue)
-          }
-        }
-      } else if (field === 'annual_noi' || field === 'annual_capex') {
-        updatedRow[field] = sanitizeCurrencyInput(value)
-      } else {
-        updatedRow[field] = value
-      }
-
-      rows[index] = updatedRow
-      return {
-        ...prev,
-        [propertyId]: { ...prevState, rows, loaded: true }
-      }
-    })
-  }
-
-  const handleManualFieldFocus = (propertyId, index, field) => {
-    setManualCashFlowFocus((prev) => ({
-      ...prev,
-      [manualFocusKey(propertyId, index, field)]: true
-    }))
-  }
-
-  const handleManualFieldBlur = (propertyId, index, field) => {
-    const key = manualFocusKey(propertyId, index, field)
-    setManualCashFlowFocus((prev) => {
-      const updated = { ...prev }
-      delete updated[key]
-      return updated
-    })
-    if (field === 'annual_noi' || field === 'annual_capex') {
-      setManualCashFlowForms((prev) => {
-        const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
-        const rows = [...prevState.rows]
-        if (!rows[index]) return prev
-        const normalized = normalizeCurrencyInput(rows[index][field])
-        rows[index] = { ...rows[index], [field]: normalized }
-        return {
-          ...prev,
-          [propertyId]: { ...prevState, rows }
-        }
-      })
-    }
-  }
-
-  const displayManualValue = (propertyId, index, field, value) => {
-    const key = manualFocusKey(propertyId, index, field)
-    if (field === 'year' || field === 'month' || field === 'frequency') {
-      return value
-    }
-    return manualCashFlowFocus[key] ? value : formatCurrencyInputValue(value)
-  }
-
-  const handleManualAddRow = (propertyId) => {
-    const manualState = getManualState(propertyId)
-    if (!manualState.loaded) {
-      if (!manualState.loading) {
-        loadManualCashFlows(propertyId)
-      }
-      return
-    }
-    setManualCashFlowForms((prev) => {
-      const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
-      const rows = [...prevState.rows]
-      const lastYear = rows.length ? rows[rows.length - 1].year : ''
-      const nextYear = lastYear ? String(Number(lastYear) + 1) : ''
-      rows.push({
-        year: nextYear,
-        frequency: 'annual',
-        month: '',
-        annual_noi: '',
-        annual_capex: ''
-      })
-      return {
-        ...prev,
-        [propertyId]: { ...prevState, rows, loaded: true }
-      }
-    })
-  }
-
-  const handleManualRemoveRow = (propertyId, index) => {
-    const manualState = getManualState(propertyId)
-    if (!manualState.loaded) {
-      if (!manualState.loading) {
-        loadManualCashFlows(propertyId)
-      }
-      return
-    }
-    setManualCashFlowForms((prev) => {
-      const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
-      const rows = [...prevState.rows]
-      rows.splice(index, 1)
-      return {
-        ...prev,
-        [propertyId]: { ...prevState, rows, loaded: true }
-      }
-    })
-  }
-
-  const handleManualPrefillRows = (propertyId, property) => {
-    const manualState = getManualState(propertyId)
-    if (!manualState.loaded) {
-      if (!manualState.loading) {
-        loadManualCashFlows(propertyId)
-      }
-      return
-    }
-    if (!portfolio) return
-    const fallbackYear = property.purchase_date
-      ? new Date(property.purchase_date).getFullYear()
-      : new Date().getFullYear()
-    const startYear = portfolio.analysis_start_date
-      ? new Date(portfolio.analysis_start_date).getFullYear()
-      : fallbackYear
-    const endYear = portfolio.analysis_end_date
-      ? new Date(portfolio.analysis_end_date).getFullYear()
-      : startYear + 4
-    const existing = getManualRows(propertyId)
-    const rows = []
-    for (let year = startYear; year <= endYear; year += 1) {
-      const match = existing.find((row) => Number(row.year) === year)
-      rows.push({
-        year: String(year),
-        frequency: match?.frequency || 'annual',
-        month: match?.month || '',
-        annual_noi: match?.annual_noi || '',
-        annual_capex: match?.annual_capex || ''
-      })
-    }
-    setManualCashFlowForms((prev) => ({
-      ...prev,
-      [propertyId]: { rows, loading: false, error: '', loaded: true }
-    }))
-  }
-
   const handleManualToggle = async (propertyId, enabled) => {
     try {
       await propertyAPI.update(propertyId, { use_manual_noi_capex: enabled })
+      await fetchPortfolioData()
       setSuccess(enabled ? 'Manual NOI & Capex enabled.' : 'Manual NOI & Capex disabled.')
       setError('')
-      setProperties((prev) =>
-        prev.map((property) =>
-          property.id === propertyId ? { ...property, use_manual_noi_capex: enabled } : property
-        )
-      )
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Failed to update manual mode.')
       setSuccess('')
     }
   }
 
-  const handleManualSave = async (propertyId, property) => {
-    const manualState = getManualState(propertyId)
-    if (!manualState.loaded) {
-      if (!manualState.loading) {
-        loadManualCashFlows(propertyId)
-      }
-      setError('Manual entries are still loading. Please try again once they finish loading.')
-      return
-    }
-
-    const rows = manualState.rows
-    const entries = []
-
-    for (const row of rows) {
-      if (!row.year) continue
-      const freq = row.frequency || 'annual'
-      if (freq === 'monthly' && !row.month) {
-        setError('Monthly manual entries require a month (1-12).')
-        return
-      }
-      const normalizedNoi = normalizeCurrencyInput(row.annual_noi)
-      const normalizedCapex = normalizeCurrencyInput(row.annual_capex)
-      entries.push({
-        year: Number(row.year),
-        month: freq === 'monthly' ? Number(row.month) : null,
-        annual_noi: normalizedNoi === '' ? null : Number(normalizedNoi),
-        annual_capex: normalizedCapex === '' ? null : Number(normalizedCapex)
-      })
-    }
-
-    try {
-      await propertyAPI.saveManualCashFlows(propertyId, {
-        entries,
-        use_manual_noi_capex: property.use_manual_noi_capex
-      })
-      setSuccess('Manual NOI & Capex saved.')
-      setError('')
-      await loadManualCashFlows(propertyId)
-    } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to save manual cash flows.')
-      setSuccess('')
-    }
-  }
-
-  const loadManualCashFlows = async (propertyId) => {
-    setManualCashFlowForms((prev) => {
-      const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
-      return {
-        ...prev,
-        [propertyId]: { ...prevState, loading: true, error: '' }
-      }
-    })
-    try {
-      const response = await propertyAPI.getManualCashFlows(propertyId)
-      const rows = (response.data || []).map((entry) => ({
-        year: entry.year != null ? String(entry.year) : '',
-        month: entry.month != null ? String(entry.month) : '',
-        frequency: entry.month ? 'monthly' : 'annual',
-        annual_noi: entry.annual_noi != null ? String(Math.round(entry.annual_noi)) : '',
-        annual_capex: entry.annual_capex != null ? String(Math.round(entry.annual_capex)) : ''
-      }))
-      setManualCashFlowForms((prev) => ({
-        ...prev,
-        [propertyId]: { rows, loading: false, error: '', loaded: true }
-      }))
-    } catch (err) {
-      setManualCashFlowForms((prev) => {
-        const prevState = prev[propertyId] || { rows: [], loading: false, error: '', loaded: false }
-        return {
-          ...prev,
-          [propertyId]: {
-            ...prevState,
-            loading: false,
-            error: err.response?.data?.error || err.message || 'Failed to load manual entries'
-          }
-        }
-      })
-    }
-  }
 
   const loadPropertyCashFlows = async (propertyId) => {
     setPropertyFlowState((prev) => ({
@@ -1347,6 +1090,10 @@ function PortfolioDetail() {
   }
 
   const handlePropertyAccordionChange = (propertyId, property) => (_, expanded) => {
+    setPropertyAccordionExpanded((prev) => ({
+      ...prev,
+      [propertyId]: expanded
+    }))
     if (!expanded) return
     if (!ownershipEvents[propertyId] || ownershipEvents[propertyId].data.length === 0) {
       fetchOwnershipEvents(propertyId)
@@ -1354,10 +1101,6 @@ function PortfolioDetail() {
     ensureOwnershipFormDefaults(propertyId, property)
     if (!propertyFlowState[propertyId]?.data && !propertyFlowState[propertyId]?.loading) {
       loadPropertyCashFlows(propertyId)
-    }
-    const manualState = manualCashFlowForms[propertyId]
-    if (!manualState || (!manualState.loaded && !manualState.loading)) {
-      loadManualCashFlows(propertyId)
     }
   }
 
@@ -1613,8 +1356,6 @@ function PortfolioDetail() {
                   const flowsForProperty = propertyFlowEntry.data || []
                   const propertyFlowsLoading = propertyFlowEntry.loading
                   const propertyFlowsError = propertyFlowEntry.error
-                  const manualState = getManualState(property.id)
-                  const manualRows = manualState.rows
                   const hasActiveLoan = Boolean(getPropertyFieldValue(property.id, 'has_active_loan'))
                   const manualEncumbrance = Boolean(
                     getPropertyFieldValue(property.id, 'encumbrance_override')
@@ -2120,226 +1861,16 @@ function PortfolioDetail() {
                           </Box>
                         )}
 
-                        <Box sx={{ mb: 2 }}>
-                          <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                            Manual NOI & Capex
-                          </Typography>
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={!!property.use_manual_noi_capex}
-                                onChange={(e) => handleManualToggle(property.id, e.target.checked)}
-                              />
-                            }
-                            label="Use manual entries"
-                          />
-                          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                            Enter annual totals or specify monthly overrides to replace projected NOI and Capex.
-                          </Typography>
+                        <ManualNoiCapexEditor
+                          property={property}
+                          portfolio={portfolio}
+                          isExpanded={!!propertyAccordionExpanded[property.id]}
+                          onToggle={handleManualToggle}
+                          onSuccess={setSuccess}
+                          onError={setError}
+                          refreshPortfolio={fetchPortfolioData}
+                        />
 
-                          {manualState.error && (
-                            <Alert severity="error" sx={{ mb: 1 }}>
-                              {manualState.error}
-                              <Button
-                                size="small"
-                                sx={{ ml: 2 }}
-                                onClick={() => loadManualCashFlows(property.id)}
-                                disabled={manualState.loading}
-                              >
-                                Retry
-                              </Button>
-                            </Alert>
-                          )}
-
-                          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              onClick={() => handleManualPrefillRows(property.id, property)}
-                              disabled={manualState.loading}
-                            >
-                              Prefill Years
-                            </Button>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              onClick={() => handleManualAddRow(property.id)}
-                              disabled={manualState.loading}
-                            >
-                              Add Row
-                            </Button>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              onClick={() => loadManualCashFlows(property.id)}
-                              disabled={manualState.loading}
-                            >
-                              {manualState.loaded ? 'Reload Entries' : 'Load Entries'}
-                            </Button>
-                          </Box>
-
-                          {manualState.loading && !manualState.loaded ? (
-                            <Typography variant="body2" color="text.secondary">
-                              Loading manual entries...
-                            </Typography>
-                          ) : !manualState.loaded ? (
-                            <Typography variant="body2" color="text.secondary">
-                              Click "Load Entries" to fetch manual overrides for this property.
-                            </Typography>
-                          ) : (
-                            <>
-                              {manualState.loading && manualState.loaded && (
-                                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                                  Refreshing entries...
-                                </Typography>
-                              )}
-                              <TableContainer>
-                                <Table size="small">
-                                  <TableHead>
-                                    <TableRow>
-                                      <TableCell>Year</TableCell>
-                                      <TableCell>Frequency</TableCell>
-                                      <TableCell>Month</TableCell>
-                                      <TableCell>NOI</TableCell>
-                                      <TableCell>Capex</TableCell>
-                                      <TableCell align="right">Actions</TableCell>
-                                    </TableRow>
-                                  </TableHead>
-                                  <TableBody>
-                                    {manualRows.length === 0 ? (
-                                      <TableRow>
-                                        <TableCell colSpan={6}>
-                                          <Typography variant="body2" color="text.secondary">
-                                            No manual entries yet.
-                                          </Typography>
-                                        </TableCell>
-                                      </TableRow>
-                                    ) : (
-                                      manualRows.map((row, idx) => (
-                                        <TableRow key={`${property.id}-manual-${idx}`}>
-                                          <TableCell width="12%">
-                                            <TextField
-                                              size="small"
-                                              value={row.year || ''}
-                                              onChange={(e) =>
-                                                handleManualRowChange(property.id, idx, 'year', e.target.value)
-                                              }
-                                              placeholder="2026"
-                                            />
-                                          </TableCell>
-                                          <TableCell width="18%">
-                                            <TextField
-                                              select
-                                              size="small"
-                                              value={row.frequency || 'annual'}
-                                              onChange={(e) =>
-                                                handleManualRowChange(property.id, idx, 'frequency', e.target.value)
-                                              }
-                                            >
-                                              <MenuItem value="annual">Annual</MenuItem>
-                                              <MenuItem value="monthly">Monthly</MenuItem>
-                                            </TextField>
-                                          </TableCell>
-                                          <TableCell width="15%">
-                                            <TextField
-                                              select
-                                              size="small"
-                                              value={row.month || ''}
-                                              onChange={(e) =>
-                                                handleManualRowChange(property.id, idx, 'month', e.target.value)
-                                              }
-                                              disabled={(row.frequency || 'annual') !== 'monthly'}
-                                            >
-                                              {[...Array(12)].map((_, monthIdx) => (
-                                                <MenuItem key={monthIdx + 1} value={String(monthIdx + 1)}>
-                                                  {monthIdx + 1}
-                                                </MenuItem>
-                                              ))}
-                                            </TextField>
-                                          </TableCell>
-                                          <TableCell width="22%">
-                                            <TextField
-                                              size="small"
-                                              value={displayManualValue(
-                                                property.id,
-                                                idx,
-                                                'annual_noi',
-                                                row.annual_noi
-                                              )}
-                                              onFocus={() =>
-                                                handleManualFieldFocus(property.id, idx, 'annual_noi')
-                                              }
-                                              onBlur={() =>
-                                                handleManualFieldBlur(property.id, idx, 'annual_noi')
-                                              }
-                                              onChange={(e) =>
-                                                handleManualRowChange(
-                                                  property.id,
-                                                  idx,
-                                                  'annual_noi',
-                                                  e.target.value
-                                                )
-                                              }
-                                              inputMode="numeric"
-                                              placeholder="1,000,000"
-                                            />
-                                          </TableCell>
-                                          <TableCell width="22%">
-                                            <TextField
-                                              size="small"
-                                              value={displayManualValue(
-                                                property.id,
-                                                idx,
-                                                'annual_capex',
-                                                row.annual_capex
-                                              )}
-                                              onFocus={() =>
-                                                handleManualFieldFocus(property.id, idx, 'annual_capex')
-                                              }
-                                              onBlur={() =>
-                                                handleManualFieldBlur(property.id, idx, 'annual_capex')
-                                              }
-                                              onChange={(e) =>
-                                                handleManualRowChange(
-                                                  property.id,
-                                                  idx,
-                                                  'annual_capex',
-                                                  e.target.value
-                                                )
-                                              }
-                                              inputMode="numeric"
-                                              placeholder="100,000"
-                                            />
-                                          </TableCell>
-                                          <TableCell align="right" width="11%">
-                                            <Button
-                                              size="small"
-                                              color="error"
-                                              onClick={() => handleManualRemoveRow(property.id, idx)}
-                                              disabled={manualState.loading}
-                                            >
-                                              Remove
-                                            </Button>
-                                          </TableCell>
-                                        </TableRow>
-                                      ))
-                                    )}
-                                  </TableBody>
-                                </Table>
-                              </TableContainer>
-                              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
-                                <Button
-                                  size="small"
-                                  variant="contained"
-                                  onClick={() => handleManualSave(property.id, property)}
-                                  disabled={manualState.loading}
-                                >
-                                  Save Manual Entries
-                                </Button>
-                              </Box>
-                            </>
-                          )}
-                        </Box>
 
                         <Divider sx={{ my: 2 }} />
 
@@ -3201,7 +2732,11 @@ function PortfolioDetail() {
                       <TableCell>Month</TableCell>
                       <TableCell align="right">Fund DSCR (TTM)</TableCell>
                       <TableCell align="right">Fund LTV</TableCell>
+                      <TableCell align="right">Unenc. DSCR</TableCell>
+                      <TableCell align="right">Unenc. LTV</TableCell>
                       <TableCell align="right">Debt Yield</TableCell>
+                      <TableCell align="right">Unenc. Market Value</TableCell>
+                      <TableCell align="right">Unenc. Debt</TableCell>
                       <TableCell align="right">TTM NOI</TableCell>
                       <TableCell align="right">TTM Debt Service</TableCell>
                       <TableCell align="right">Outstanding Debt</TableCell>
@@ -3226,14 +2761,18 @@ function PortfolioDetail() {
                             <TableCell>{monthEntry.date}</TableCell>
                             <TableCell align="right">{formatRatio(fund.dscr)}</TableCell>
                             <TableCell align="right">{formatPercent(fund.ltv)}</TableCell>
+                            <TableCell align="right">{formatRatio(fund.unencumbered_dscr)}</TableCell>
+                            <TableCell align="right">{formatPercent(fund.unencumbered_ltv)}</TableCell>
                             <TableCell align="right">{formatPercent(fund.debt_yield)}</TableCell>
+                            <TableCell align="right">{formatCurrency(fund.unencumbered_market_value)}</TableCell>
+                            <TableCell align="right">{formatCurrency(fund.unencumbered_debt)}</TableCell>
                             <TableCell align="right">{formatCurrency(fund.ttm_noi)}</TableCell>
                             <TableCell align="right">{formatCurrency(fund.ttm_debt_service)}</TableCell>
                             <TableCell align="right">{formatCurrency(fund.outstanding_debt)}</TableCell>
                             <TableCell align="right">{formatCurrency(fund.market_value)}</TableCell>
                           </TableRow>
                           <TableRow>
-                            <TableCell colSpan={10} sx={{ p: 0, border: 0 }}>
+                            <TableCell colSpan={13} sx={{ p: 0, border: 0 }}>
                               <Collapse in={expanded} timeout="auto" unmountOnExit>
                                 <Box sx={{ m: 2 }}>
                                   {monthEntry.properties && monthEntry.properties.length > 0 ? (
@@ -3289,3 +2828,378 @@ function PortfolioDetail() {
 }
 
 export default PortfolioDetail
+
+const ManualNoiCapexEditor = React.memo(
+  ({
+    property,
+    portfolio,
+    isExpanded,
+    onToggle,
+    onSuccess,
+    onError,
+    refreshPortfolio
+  }) => {
+    const propertyId = property?.id
+    const [rows, setRows] = useState([])
+    const [loading, setLoading] = useState(false)
+    const [loaded, setLoaded] = useState(false)
+    const [localError, setLocalError] = useState('')
+    const [focusMap, setFocusMap] = useState({})
+    const [saving, setSaving] = useState(false)
+
+    const defaultRow = () => ({
+      year: '',
+      frequency: 'annual',
+      month: '',
+      annual_noi: '',
+      annual_capex: ''
+    })
+
+    const manualFocusKey = (index, field) => `${index}-${field}`
+
+    const loadManualCashFlows = useCallback(async () => {
+      if (!propertyId) return
+      setLoading(true)
+      setLocalError('')
+      try {
+        const response = await propertyAPI.getManualCashFlows(propertyId)
+        const nextRows = (response.data || []).map((entry) => ({
+          year: entry.year != null ? String(entry.year) : '',
+          month: entry.month != null ? String(entry.month) : '',
+          frequency: entry.month ? 'monthly' : 'annual',
+          annual_noi: entry.annual_noi != null ? String(Math.round(entry.annual_noi)) : '',
+          annual_capex: entry.annual_capex != null ? String(Math.round(entry.annual_capex)) : ''
+        }))
+        setRows(nextRows)
+        setLoaded(true)
+      } catch (err) {
+        setLocalError(err.response?.data?.error || err.message || 'Failed to load manual entries')
+      } finally {
+        setLoading(false)
+      }
+    }, [propertyId])
+
+    useEffect(() => {
+      setRows([])
+      setLoaded(false)
+      setLocalError('')
+      setFocusMap({})
+    }, [propertyId])
+
+    useEffect(() => {
+      if (isExpanded && !loaded && !loading) {
+        loadManualCashFlows()
+      }
+    }, [isExpanded, loadManualCashFlows, loaded, loading])
+
+    const ensureRowsLoaded = () => {
+      if (!loaded) {
+        if (!loading) {
+          loadManualCashFlows()
+        }
+        return false
+      }
+      return true
+    }
+
+    const handleRowChange = (index, field, value) => {
+      setRows((prev) => {
+        const next = [...prev]
+        const existing = next[index] || defaultRow()
+        const updated = { ...existing }
+
+        if (field === 'year') {
+          updated.year = value.replace(/[^0-9]/g, '')
+        } else if (field === 'frequency') {
+          updated.frequency = value
+          if (value === 'monthly' && !updated.month) {
+            updated.month = '1'
+          }
+          if (value !== 'monthly') {
+            updated.month = ''
+          }
+        } else if (field === 'month') {
+          const digits = value.replace(/[^0-9]/g, '')
+          if (digits === '') {
+            updated.month = ''
+          } else {
+            let monthValue = Number(digits)
+            if (Number.isNaN(monthValue)) {
+              updated.month = ''
+            } else {
+              monthValue = Math.max(1, Math.min(12, monthValue))
+              updated.month = String(monthValue)
+            }
+          }
+        } else if (field === 'annual_noi' || field === 'annual_capex') {
+          updated[field] = sanitizeCurrencyInput(value)
+        } else {
+          updated[field] = value
+        }
+
+        next[index] = updated
+        return next
+      })
+    }
+
+    const handleFieldFocus = (index, field) => {
+      setFocusMap((prev) => ({
+        ...prev,
+        [manualFocusKey(index, field)]: true
+      }))
+    }
+
+    const handleFieldBlur = (index, field) => {
+      const key = manualFocusKey(index, field)
+      setFocusMap((prev) => {
+        const updated = { ...prev }
+        delete updated[key]
+        return updated
+      })
+      if (field === 'annual_noi' || field === 'annual_capex') {
+        setRows((prev) => {
+          const next = [...prev]
+          if (!next[index]) return prev
+          const normalized = normalizeCurrencyInput(next[index][field])
+          next[index] = { ...next[index], [field]: normalized }
+          return next
+        })
+      }
+    }
+
+    const displayManualValue = (index, field, value) => {
+      if (field === 'year' || field === 'month' || field === 'frequency') {
+        return value
+      }
+      const key = manualFocusKey(index, field)
+      return focusMap[key] ? value : formatCurrencyInputValue(value)
+    }
+
+    const handleAddRow = () => {
+      if (!ensureRowsLoaded()) return
+      setRows((prev) => [...prev, defaultRow()])
+    }
+
+    const handleRemoveRow = (index) => {
+      if (!ensureRowsLoaded()) return
+      setRows((prev) => {
+        const next = [...prev]
+        next.splice(index, 1)
+        return next
+      })
+    }
+
+    const handlePrefillRows = () => {
+      if (!ensureRowsLoaded()) return
+      const fallbackYear = property?.purchase_date
+        ? new Date(property.purchase_date).getFullYear()
+        : new Date().getFullYear()
+      const startYear = portfolio?.analysis_start_date
+        ? new Date(portfolio.analysis_start_date).getFullYear()
+        : fallbackYear
+      const endYear = portfolio?.analysis_end_date
+        ? new Date(portfolio.analysis_end_date).getFullYear()
+        : startYear + 4
+      const filledRows = []
+      for (let year = startYear; year <= endYear; year += 1) {
+        const match = rows.find((row) => Number(row.year) === year)
+        filledRows.push({
+          year: String(year),
+          frequency: match?.frequency || 'annual',
+          month: match?.month || '',
+          annual_noi: match?.annual_noi || '',
+          annual_capex: match?.annual_capex || ''
+        })
+      }
+      setRows(filledRows)
+    }
+
+    const handleSave = async () => {
+      if (!ensureRowsLoaded()) {
+        onError?.('Manual entries are still loading. Please try again once they finish loading.')
+        return
+      }
+      const entries = []
+      for (const row of rows) {
+        if (!row.year) continue
+        const freq = row.frequency || 'annual'
+        if (freq === 'monthly' && !row.month) {
+          onError?.('Monthly manual entries require a month (1-12).')
+          return
+        }
+        const normalizedNoi = normalizeCurrencyInput(row.annual_noi)
+        const normalizedCapex = normalizeCurrencyInput(row.annual_capex)
+        entries.push({
+          year: Number(row.year),
+          month: freq === 'monthly' ? Number(row.month) : null,
+          annual_noi: normalizedNoi === '' ? null : Number(normalizedNoi),
+          annual_capex: normalizedCapex === '' ? null : Number(normalizedCapex)
+        })
+      }
+      try {
+        setSaving(true)
+        await propertyAPI.saveManualCashFlows(propertyId, {
+          entries,
+          use_manual_noi_capex: property.use_manual_noi_capex
+        })
+        onSuccess?.('Manual NOI & Capex saved.')
+        onError?.('')
+        await loadManualCashFlows()
+        if (refreshPortfolio) {
+          await refreshPortfolio()
+        }
+      } catch (err) {
+        onError?.(err.response?.data?.error || err.message || 'Failed to save manual cash flows.')
+      } finally {
+        setSaving(false)
+      }
+    }
+
+    if (!propertyId) {
+      return null
+    }
+
+    return (
+      <Box sx={{ mb: 2 }}>
+        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+          Manual NOI & Capex
+        </Typography>
+        <FormControlLabel
+          control={
+            <Switch
+              checked={!!property.use_manual_noi_capex}
+              onChange={(e) => onToggle?.(propertyId, e.target.checked)}
+            />
+          }
+          label="Use manual entries"
+        />
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Enter annual totals or specify monthly overrides to replace projected NOI and Capex.
+        </Typography>
+
+        {localError && (
+          <Alert severity="error" sx={{ mb: 1 }}>
+            {localError}
+            <Button size="small" sx={{ ml: 2 }} onClick={loadManualCashFlows} disabled={loading}>
+              Retry
+            </Button>
+          </Alert>
+        )}
+
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+          <Button size="small" variant="outlined" onClick={handlePrefillRows} disabled={loading}>
+            Prefill Years
+          </Button>
+          <Button size="small" variant="outlined" onClick={handleAddRow} disabled={loading}>
+            Add Row
+          </Button>
+          <Button size="small" variant="outlined" onClick={loadManualCashFlows} disabled={loading}>
+            {loaded ? 'Reload Entries' : 'Load Entries'}
+          </Button>
+        </Box>
+
+        {loading && !loaded ? (
+          <Typography variant="body2" color="text.secondary">
+            Loading manual entries...
+          </Typography>
+        ) : !rows.length ? (
+          <Typography variant="body2" color="text.secondary">
+            No manual entries yet.
+          </Typography>
+        ) : (
+          <>
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell width="10%">Year</TableCell>
+                    <TableCell width="15%">Frequency</TableCell>
+                    <TableCell width="10%">Month</TableCell>
+                    <TableCell width="22%">Annual NOI</TableCell>
+                    <TableCell width="22%">Annual Capex</TableCell>
+                    <TableCell width="11%" align="right">
+                      Actions
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {rows.map((row, idx) => (
+                    <TableRow key={`${propertyId}-manual-${idx}`}>
+                      <TableCell width="10%">
+                        <TextField
+                          size="small"
+                          value={row.year}
+                          onChange={(e) => handleRowChange(idx, 'year', e.target.value)}
+                          inputProps={{ inputMode: 'numeric' }}
+                          placeholder="2025"
+                        />
+                      </TableCell>
+                      <TableCell width="15%">
+                        <TextField
+                          select
+                          size="small"
+                          value={row.frequency || 'annual'}
+                          onChange={(e) => handleRowChange(idx, 'frequency', e.target.value)}
+                        >
+                          <MenuItem value="annual">Annual</MenuItem>
+                          <MenuItem value="monthly">Monthly</MenuItem>
+                        </TextField>
+                      </TableCell>
+                      <TableCell width="10%">
+                        <TextField
+                          size="small"
+                          value={row.month || ''}
+                          onChange={(e) => handleRowChange(idx, 'month', e.target.value)}
+                          inputProps={{ inputMode: 'numeric', min: 1, max: 12 }}
+                          placeholder="1"
+                          disabled={row.frequency !== 'monthly'}
+                        />
+                      </TableCell>
+                      <TableCell width="22%">
+                        <TextField
+                          size="small"
+                          value={displayManualValue(idx, 'annual_noi', row.annual_noi)}
+                          onFocus={() => handleFieldFocus(idx, 'annual_noi')}
+                          onBlur={() => handleFieldBlur(idx, 'annual_noi')}
+                          onChange={(e) => handleRowChange(idx, 'annual_noi', e.target.value)}
+                          inputMode="numeric"
+                          placeholder="1,000,000"
+                        />
+                      </TableCell>
+                      <TableCell width="22%">
+                        <TextField
+                          size="small"
+                          value={displayManualValue(idx, 'annual_capex', row.annual_capex)}
+                          onFocus={() => handleFieldFocus(idx, 'annual_capex')}
+                          onBlur={() => handleFieldBlur(idx, 'annual_capex')}
+                          onChange={(e) => handleRowChange(idx, 'annual_capex', e.target.value)}
+                          inputMode="numeric"
+                          placeholder="100,000"
+                        />
+                      </TableCell>
+                      <TableCell align="right" width="11%">
+                        <Button size="small" color="error" onClick={() => handleRemoveRow(idx)} disabled={loading}>
+                          Remove
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={handleSave}
+                disabled={loading || saving}
+              >
+                {saving ? 'Saving…' : 'Save Manual Entries'}
+              </Button>
+            </Box>
+          </>
+        )}
+      </Box>
+    )
+  }
+)

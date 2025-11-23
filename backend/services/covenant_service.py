@@ -215,6 +215,7 @@ def _calculate_fund_metrics(
     unassigned_metrics: Dict[date, dict],
 ) -> Dict[date, dict]:
     fund_metrics = {}
+    UNENCUMBERED_TOLERANCE = 1e-6
     for month in month_list:
         properties = property_metrics.get(month, {})
         total_noi = sum(entry.get('ttm_noi', 0.0) for entry in properties.values())
@@ -225,9 +226,21 @@ def _calculate_fund_metrics(
         total_debt_service += unassigned_metrics.get(month, {}).get('ttm_debt_service', 0.0)
         total_outstanding += unassigned_metrics.get(month, {}).get('outstanding', 0.0)
 
+        unencumbered_props = [
+            entry
+            for entry in properties.values()
+            if abs(entry.get('outstanding_debt', 0.0) or 0.0) <= UNENCUMBERED_TOLERANCE
+        ]
+        unencumbered_noi = sum(entry.get('ttm_noi', 0.0) for entry in unencumbered_props)
+        unencumbered_value = sum(entry.get('market_value', 0.0) for entry in unencumbered_props)
+        unencumbered_debt_service = unassigned_metrics.get(month, {}).get('ttm_debt_service', 0.0)
+        unencumbered_debt = unassigned_metrics.get(month, {}).get('outstanding', 0.0)
+
         dscr = _safe_divide(total_noi, total_debt_service)
         ltv = _safe_divide(total_outstanding, total_value)
         debt_yield = _safe_divide(total_noi, total_outstanding)
+        unencumbered_dscr = _safe_divide(unencumbered_noi, unencumbered_debt_service)
+        unencumbered_ltv = _safe_divide(unencumbered_debt, unencumbered_value)
 
         fund_metrics[month] = {
             'ttm_noi': total_noi,
@@ -237,6 +250,12 @@ def _calculate_fund_metrics(
             'dscr': dscr,
             'ltv': ltv,
             'debt_yield': debt_yield,
+            'unencumbered_ttm_noi': unencumbered_noi,
+            'unencumbered_ttm_debt_service': unencumbered_debt_service,
+            'unencumbered_market_value': unencumbered_value,
+            'unencumbered_debt': unencumbered_debt,
+            'unencumbered_dscr': unencumbered_dscr,
+            'unencumbered_ltv': unencumbered_ltv,
             'has_data': True,
         }
 
@@ -402,6 +421,17 @@ def _format_metric_payload(data: dict) -> dict:
         'ltv': data.get('ltv'),
         'debt_yield': data.get('debt_yield'),
     }
+    if 'unencumbered_ttm_noi' in data:
+        payload['unencumbered_ttm_noi'] = round(data.get('unencumbered_ttm_noi') or 0.0, 2)
+        payload['unencumbered_ttm_debt_service'] = round(
+            data.get('unencumbered_ttm_debt_service') or 0.0, 2
+        )
+        payload['unencumbered_market_value'] = round(
+            data.get('unencumbered_market_value') or 0.0, 2
+        )
+        payload['unencumbered_debt'] = round(data.get('unencumbered_debt') or 0.0, 2)
+        payload['unencumbered_dscr'] = data.get('unencumbered_dscr')
+        payload['unencumbered_ltv'] = data.get('unencumbered_ltv')
     if 'property_id' in data:
         payload['property_id'] = data['property_id']
         payload['property_name'] = data.get('property_name')
